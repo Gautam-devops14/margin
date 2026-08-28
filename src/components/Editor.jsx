@@ -137,6 +137,7 @@ export default function Editor({ note, subject, me, onBack }) {
     }
 
     return () => {
+      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -235,11 +236,11 @@ export default function Editor({ note, subject, me, onBack }) {
       }
 
       const rect = anchor.getBoundingClientRect();
-      const parentRect = ref.current ? ref.current.getBoundingClientRect() : { top: 0, left: 0 };
+      const parentRect = ref.current ? ref.current.getBoundingClientRect() : { top: 0, left: 0, width: 320 };
       setSelectedLink(anchor);
       setLinkPopoverPos({
         top: Math.max(0, rect.top - parentRect.top - 42),
-        left: Math.max(0, rect.left - parentRect.left),
+        left: Math.min(Math.max(0, parentRect.width - 220), Math.max(0, rect.left - parentRect.left)),
       });
       setSelectedImg(null);
       return;
@@ -250,11 +251,11 @@ export default function Editor({ note, subject, me, onBack }) {
     if (e.target.tagName === 'IMG') {
       const img = e.target;
       const rect = img.getBoundingClientRect();
-      const parentRect = ref.current.getBoundingClientRect();
+      const parentRect = ref.current ? ref.current.getBoundingClientRect() : { top: 0, left: 0, width: 320 };
       setSelectedImg(img);
       setPopoverPos({
-        top: rect.top - parentRect.top - 42,
-        left: Math.max(0, rect.left - parentRect.left),
+        top: Math.max(0, rect.top - parentRect.top - 42),
+        left: Math.min(Math.max(0, parentRect.width - 220), Math.max(0, rect.left - parentRect.left)),
       });
     } else {
       setSelectedImg(null);
