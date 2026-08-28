@@ -208,6 +208,28 @@ export default function App() {
     await loadNotes(); await loadShared(); await loadFriends();
   }
 
+  async function toggleNoteShare(n, e) {
+    if (e) e.stopPropagation();
+    const nextVal = !n.share_with_friends;
+
+    // Optimistic UI update in notes state
+    setNotes((prev) =>
+      prev.map((item) => (item.id === n.id ? { ...item, share_with_friends: nextVal } : item))
+    );
+
+    const { error } = await supabase
+      .from('notes')
+      .update({ share_with_friends: nextVal, updated_at: new Date().toISOString() })
+      .eq('id', n.id);
+
+    if (error) {
+      toast(error.message || 'Could not update share setting');
+      loadNotes();
+    } else {
+      toast(nextVal ? '🤝 Note is now shared with friends!' : '🔒 Note is now private');
+    }
+  }
+
   async function deleteNote(n, e) {
     e.stopPropagation();
     if (!confirm('Delete this note?')) return;
@@ -424,7 +446,13 @@ export default function App() {
                     <h3>{n.topic || n.title || 'Untitled topic'}</h3>
                   </div>
 
-                  <div className="cardright" style={{ gap: 8 }}>
+                  <div className="cardright" style={{ gap: 8, alignItems: 'center' }}>
+                    <label className="toggle-wrap" style={{ margin: 0, cursor: 'pointer' }} onClick={(e) => toggleNoteShare(n, e)} title="Toggle Share with Friends">
+                      <div className={`toggle-switch ${n.share_with_friends ? 'on' : ''}`}>
+                        <div className="toggle-slider" />
+                      </div>
+                      <span style={{ fontSize: '11px', fontWeight: 600 }}>{n.share_with_friends ? 'Shared' : 'Private'}</span>
+                    </label>
                     <span className="meta">{fmtDate(n.updated_at)}</span>
                     <div style={{ display: 'flex', gap: 6 }}>
                       <button className="btn ghost" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={(e) => copyNoteText(n, e)} title="Copy note text to clipboard">
@@ -496,7 +524,13 @@ export default function App() {
                       </div>
                       <h3>{n.topic || n.title || 'Untitled topic'}</h3>
                     </div>
-                    <div className="cardright" style={{ gap: 8 }}>
+                    <div className="cardright" style={{ gap: 8, alignItems: 'center' }}>
+                      <label className="toggle-wrap" style={{ margin: 0, cursor: 'pointer' }} onClick={(e) => toggleNoteShare(n, e)} title="Toggle Share with Friends">
+                        <div className={`toggle-switch ${n.share_with_friends ? 'on' : ''}`}>
+                          <div className="toggle-slider" />
+                        </div>
+                        <span style={{ fontSize: '11px', fontWeight: 600 }}>{n.share_with_friends ? 'Shared' : 'Private'}</span>
+                      </label>
                       <span className="meta">{fmtDate(n.updated_at)}</span>
                       <button className="btn ghost" style={{ padding: '3px 8px', fontSize: '11px' }} onClick={(e) => copyDirectNoteLink(n, e)} title="Copy direct ID permalink for this note">
                         🔗 Link
