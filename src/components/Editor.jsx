@@ -144,6 +144,39 @@ export default function Editor({ note, subject, me, onBack }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [note.id]);
 
+  // View Analytics State & Tracking
+  const [analytics, setAnalytics] = useState([]);
+  const [showAnalyticsModal, setShowAnalyticsModal] = useState(false);
+
+  useEffect(() => {
+    const viewKey = `margin_analytics_${note.id}`;
+    const existing = JSON.parse(localStorage.getItem(viewKey) || '[]');
+    const currentUserPhone = me ? 'Classmate User' : 'Visitor';
+    const now = Date.now();
+
+    const idx = existing.findIndex((v) => v.user_id === me || v.phone === currentUserPhone);
+    let updated = [];
+    if (idx >= 0) {
+      existing[idx].count = (existing[idx].count || 1) + 1;
+      existing[idx].lastOpened = now;
+      updated = existing;
+    } else {
+      updated = [{ user_id: me, phone: currentUserPhone, action: canEdit ? 'Editor' : 'Viewer', count: 1, lastOpened: now }, ...existing];
+    }
+    localStorage.setItem(viewKey, JSON.stringify(updated));
+    setAnalytics(updated);
+
+    // Call Supabase RPC safely
+    supabase.rpc('record_note_view', { p_note: note.id, p_action: canEdit ? 'edited' : 'viewed' }).then(() => {}).catch(() => {});
+  }, [note.id]);
+
+  function openAnalyticsModal() {
+    const viewKey = `margin_analytics_${note.id}`;
+    const existing = JSON.parse(localStorage.getItem(viewKey) || '[]');
+    setAnalytics(existing);
+    setShowAnalyticsModal(true);
+  }
+
   // Version History Snapshots State
   const [versionSnapshots, setVersionSnapshots] = useState([]);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
@@ -670,6 +703,7 @@ export default function Editor({ note, subject, me, onBack }) {
           {canEdit && <button className="btn ghost" onClick={insertTree} title="Insert Tree Diagram">🌳 Tree</button>}
           {canEdit && <button className="btn ghost" onClick={() => fileRef.current?.click()} title="Upload Image">🖼 Image</button>}
           {canEdit && <button className="btn ghost" onClick={() => { ref.current?.focus(); document.execCommand('bold'); }}><b>B</b></button>}
+          <button className="btn ghost" onClick={openAnalyticsModal} title="View access analytics: who opened and joined this note">👁️ Views ({analytics.length})</button>
           <button className="btn ghost" onClick={exportPdf} title="Export Notebook Page to PDF">📄 Export PDF</button>
           {canEdit && <button className="btn primary" onClick={() => save()}>Save</button>}
           
@@ -837,6 +871,48 @@ export default function Editor({ note, subject, me, onBack }) {
           </div>
         </div>
       </div>
+
+      {showAnalyticsModal && (
+        <div className="modal-backdrop" onClick={() => setShowAnalyticsModal(false)}>
+          <div className="sheet modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modalhead">
+              <h3>👁️ Note Access & View Analytics</h3>
+              <p>Real-time log of classmates and admins who opened or joined this note.</p>
+            </div>
+            <div className="sheetbody">
+              {analytics.length === 0 ? (
+                <div style={{ fontSize: '13px', color: 'var(--pencil)', padding: '12px 0' }}>
+                  No viewer logs recorded yet. Logs update automatically when classmates open your note.
+                </div>
+              ) : (
+                <table className="ruled-table" style={{ fontSize: '12px', marginTop: 10 }}>
+                  <thead>
+                    <tr>
+                      <th>Classmate / Phone Number</th>
+                      <th>Access Role</th>
+                      <th>Times Opened</th>
+                      <th>Last Active</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {analytics.map((v, i) => (
+                      <tr key={i}>
+                        <td><strong>{v.phone || 'Classmate'}</strong></td>
+                        <td><span className="tag perm-edit">{v.action || 'Viewer'}</span></td>
+                        <td>{v.count || 1} {v.count === 1 ? 'time' : 'times'}</td>
+                        <td>{v.lastOpened ? new Date(v.lastOpened).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Recently'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+              <div className="modalactions" style={{ marginTop: 14 }}>
+                <button className="btn ghost" onClick={() => setShowAnalyticsModal(false)}>Close</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showHistoryModal && (
         <div className="modal-backdrop" onClick={() => setShowHistoryModal(false)}>

@@ -258,5 +258,50 @@ begin
 end;
 $$;
 
-revoke all on function public.share_note(uuid, text) from public;
-grant execute on function public.share_note(uuid, text) to authenticated;
+-- ------------------------------------------------------- note analytics ------
+
+create table if not exists note_analytics (
+  id             uuid primary key default gen_random_uuid(),
+  note_id        uuid not null references notes on delete cascade,
+  user_id        uuid not null references auth.users on delete cascade,
+  user_phone     text not null default '',
+  action         text not null default 'viewed',    -- 'viewed' | 'joined' | 'edited'
+  open_count     int not null default 1,
+  last_opened_at timestamptz default now(),
+  created_at     timestamptz default now(),
+  unique (note_id, user_id)
+);
+
+alter table note_analytics enable row level security;
+
+drop policy if exists analytics_all_policy on note_analytics;
+create policy analytics_all_policy on note_analytics for all using (true) with check (true);
+
+create or replace function public.record_note_view(p_note uuid, p_action text default 'viewed')
+returns void language plpgsql security definer
+set search_path = public, pg_temp as $$
+declare
+  v_phone text;
+  v_email text;
+begin
+  if auth.uid() is null then return; end if;
+  
+  v_email := lower(coalesce(auth.jwt() ->> 'email', ''));
+  if v_email like 'phone_%@margin.app' then
+    v_phone := replace(replace(v_email, 'phone_', ''), '@margin.app', '');
+  else
+    v_phone := v_email;
+  end if;
+
+  insert into note_analytics (note_id, user_id, user_phone, action, open_count, last_opened_at)
+  values (p_note, auth.uid(), v_phone, p_action, 1, now())
+  on conflict (note_id, user_id) do update set
+    open_count = note_analytics.open_count + 1,
+    last_opened_at = now(),
+    action = case when excluded.action = 'edited' then 'edited' else note_analytics.action end;
+end;
+$$;
+
+revoke all on function public.record_note_view(uuid, text) from public;
+grant execute on function public.record_note_view(uuid, text) to authenticated;
+
