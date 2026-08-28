@@ -6,10 +6,12 @@ function sanitizeHtml(html) {
   if (!html) return '';
   const div = document.createElement('div');
   div.innerHTML = html;
-  div.querySelectorAll('script, iframe, object, embed, form, input, button').forEach((el) => el.remove());
+  div.querySelectorAll('script, iframe, object, embed, form, button').forEach((el) => el.remove());
   div.querySelectorAll('*').forEach((el) => {
     Array.from(el.attributes).forEach((attr) => {
-      if (attr.name.startsWith('on') || attr.value.trim().toLowerCase().startsWith('javascript:')) {
+      const name = attr.name.toLowerCase();
+      const val = attr.value.trim().toLowerCase();
+      if (name.startsWith('on') || val.startsWith('javascript:') || val.startsWith('data:text/html')) {
         el.removeAttribute(attr.name);
       }
     });
