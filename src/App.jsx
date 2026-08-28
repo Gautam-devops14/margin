@@ -313,6 +313,7 @@ export default function App() {
         note={current}
         subject={subjectById(current.subject_id)}
         me={session.user.id}
+        isAdmin={isAdmin}
         onBack={backFromEditor}
       />
     );

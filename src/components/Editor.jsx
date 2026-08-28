@@ -17,7 +17,7 @@ function sanitizeHtml(html) {
   return div.innerHTML;
 }
 
-export default function Editor({ note, subject, me, onBack }) {
+export default function Editor({ note, subject, me, isAdmin, onBack }) {
   const ref = useRef(null);
   const fileRef = useRef(null);
   const scanRef = useRef(null);
@@ -703,7 +703,7 @@ export default function Editor({ note, subject, me, onBack }) {
           {canEdit && <button className="btn ghost" onClick={insertTree} title="Insert Tree Diagram">🌳 Tree</button>}
           {canEdit && <button className="btn ghost" onClick={() => fileRef.current?.click()} title="Upload Image">🖼 Image</button>}
           {canEdit && <button className="btn ghost" onClick={() => { ref.current?.focus(); document.execCommand('bold'); }}><b>B</b></button>}
-          <button className="btn ghost" onClick={openAnalyticsModal} title="View access analytics: who opened and joined this note">👁️ Views ({analytics.length})</button>
+          {isAdmin && <button className="btn ghost" onClick={openAnalyticsModal} title="Admin Analytics: who opened and joined this note">👁️ Admin Views ({analytics.length})</button>}
           <button className="btn ghost" onClick={exportPdf} title="Export Notebook Page to PDF">📄 Export PDF</button>
           {canEdit && <button className="btn primary" onClick={() => save()}>Save</button>}
           
@@ -872,7 +872,7 @@ export default function Editor({ note, subject, me, onBack }) {
         </div>
       </div>
 
-      {showAnalyticsModal && (
+      {showAnalyticsModal && isAdmin && (
         <div className="modal-backdrop" onClick={() => setShowAnalyticsModal(false)}>
           <div className="sheet modal" onClick={(e) => e.stopPropagation()}>
             <div className="modalhead">
