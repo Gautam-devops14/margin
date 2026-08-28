@@ -69,13 +69,6 @@ export default function Auth() {
     }
   }
 
-  function fillAdmin() {
-    setPhone('gmkicoding159@gmail.com');
-    setPw('123456789');
-    setErr('');
-    setOk('Admin credentials filled!');
-  }
-
   return (
     <div className="authwrap">
       <div className="sheet authsheet">
@@ -122,12 +115,6 @@ export default function Auth() {
           <button className="btn primary block" onClick={submit} disabled={busy}>
             {busy ? 'Working…' : mode === 'in' ? 'Sign in' : 'Create account'}
           </button>
-
-          <div style={{ textAlign: 'center', marginTop: 12 }}>
-            <button className="btn ghost" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={fillAdmin}>
-              🔑 Fill Admin Credentials (gmkicoding159@gmail.com)
-            </button>
-          </div>
 
           <div className="switch">
             {mode === 'in' ? (
