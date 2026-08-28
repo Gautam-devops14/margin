@@ -215,12 +215,38 @@ export default function Editor({ note, subject, me, onBack }) {
     setHasDraft(true);
   }
 
+  // Link Popover state
+  const [selectedLink, setSelectedLink] = useState(null);
+  const [linkPopoverPos, setLinkPopoverPos] = useState({ top: 0, left: 0 });
+
   function flash(m) {
     setStatus(m);
     setTimeout(() => setStatus(''), 2500);
   }
 
   function onPaperClick(e) {
+    const anchor = e.target.closest ? e.target.closest('a') : null;
+    if (anchor && anchor.getAttribute('href')) {
+      const url = anchor.getAttribute('href');
+      // Open immediately if Ctrl/Cmd held or bookmark chip or view-only mode
+      if (e.ctrlKey || e.metaKey || anchor.classList.contains('link-bookmark-chip') || !canEdit) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+        return;
+      }
+
+      const rect = anchor.getBoundingClientRect();
+      const parentRect = ref.current ? ref.current.getBoundingClientRect() : { top: 0, left: 0 };
+      setSelectedLink(anchor);
+      setLinkPopoverPos({
+        top: Math.max(0, rect.top - parentRect.top - 42),
+        left: Math.max(0, rect.left - parentRect.left),
+      });
+      setSelectedImg(null);
+      return;
+    }
+
+    setSelectedLink(null);
+
     if (e.target.tagName === 'IMG') {
       const img = e.target;
       const rect = img.getBoundingClientRect();
@@ -719,6 +745,25 @@ export default function Editor({ note, subject, me, onBack }) {
                 <button onClick={() => setImgWidth(75)}>75%</button>
                 <button onClick={() => setImgWidth(100)}>100%</button>
                 <button onClick={removeImg} style={{ background: '#d6455c' }}>🗑</button>
+              </div>
+            )}
+
+            {selectedLink && (
+              <div className="img-popover" style={{ top: linkPopoverPos.top, left: linkPopoverPos.left, background: '#1e293b', color: '#fff' }}>
+                <span style={{ fontSize: '11px', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8' }}>
+                  {selectedLink.getAttribute('href')}
+                </span>
+                <button onClick={() => window.open(selectedLink.getAttribute('href'), '_blank', 'noopener,noreferrer')} style={{ background: '#2563eb', color: '#fff', fontWeight: 600 }}>
+                  Open ↗
+                </button>
+                <button onClick={() => { navigator.clipboard.writeText(selectedLink.getAttribute('href')); flash('Copied link to clipboard!'); }}>
+                  Copy
+                </button>
+                {canEdit && (
+                  <button onClick={() => { selectedLink.replaceWith(document.createTextNode(selectedLink.innerText)); setSelectedLink(null); saveLocalDraft(); }} style={{ background: '#dc2626', color: '#fff' }}>
+                    Unlink
+                  </button>
+                )}
               </div>
             )}
 
