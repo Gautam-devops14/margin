@@ -396,8 +396,11 @@ export default function Editor({ note, subject, me, isAdmin, onBack }) {
   function onKeyDown(e) {
     if (!canEdit) { e.preventDefault(); return; }
 
+    const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+
     // Intercept Undo (Ctrl+Z / Cmd+Z) and Redo (Ctrl+Y / Cmd+Shift+Z / Cmd+Y)
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    if (isCmdOrCtrl && key === 'z') {
       e.preventDefault();
       if (e.shiftKey) {
         handleRedo();
@@ -406,9 +409,36 @@ export default function Editor({ note, subject, me, isAdmin, onBack }) {
       }
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+    if (isCmdOrCtrl && key === 'y') {
       e.preventDefault();
       handleRedo();
+      return;
+    }
+
+    // Bold shortcut: Cmd+B / Ctrl+B
+    if (isCmdOrCtrl && key === 'b') {
+      e.preventDefault();
+      document.execCommand('bold');
+      saveLocalDraft();
+      flash('Bold toggled (Ctrl+B)');
+      return;
+    }
+
+    // Underline shortcut: Cmd+U / Ctrl+U
+    if (isCmdOrCtrl && key === 'u') {
+      e.preventDefault();
+      document.execCommand('underline');
+      saveLocalDraft();
+      flash('Underline toggled (Ctrl+U)');
+      return;
+    }
+
+    // Italic shortcut: Cmd+I / Ctrl+I
+    if (isCmdOrCtrl && key === 'i') {
+      e.preventDefault();
+      document.execCommand('italic');
+      saveLocalDraft();
+      flash('Italic toggled (Ctrl+I)');
       return;
     }
 
@@ -442,6 +472,46 @@ export default function Editor({ note, subject, me, isAdmin, onBack }) {
     return /^https?:\/\/[^\s]+$/i.test(s) || /^www\.[^\s]+$/i.test(s);
   }
 
+  function cleanPastedHtml(rawHtml) {
+    if (!rawHtml) return '';
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(rawHtml, 'text/html');
+
+    // Remove junk elements & script tags
+    doc.querySelectorAll('script, style, meta, link, iframe, object, embed, form, button, xml, o\\:p').forEach((el) => el.remove());
+
+    // Strip inline styles, background colors, ugly font families & class names
+    doc.body.querySelectorAll('*').forEach((el) => {
+      const tag = el.tagName.toLowerCase();
+      const allowedAttrs = [];
+      if (tag === 'a') allowedAttrs.push('href', 'target', 'title');
+      if (tag === 'td' || tag === 'th') allowedAttrs.push('colspan', 'rowspan');
+      if (tag === 'img') allowedAttrs.push('src', 'alt', 'width');
+      if (el.classList.contains('ruled-table') || el.classList.contains('tree-box')) {
+        allowedAttrs.push('class');
+      }
+
+      Array.from(el.attributes).forEach((attr) => {
+        if (!allowedAttrs.includes(attr.name.toLowerCase())) {
+          el.removeAttribute(attr.name);
+        }
+      });
+
+      // Unwrap useless inline spans or divs with no formatting
+      if ((tag === 'span' || tag === 'div') && el.attributes.length === 0) {
+        const parent = el.parentNode;
+        if (parent) {
+          while (el.firstChild) {
+            parent.insertBefore(el.firstChild, el);
+          }
+          parent.removeChild(el);
+        }
+      }
+    });
+
+    return doc.body.innerHTML.trim();
+  }
+
   function onPaste(e) {
     const items = e.clipboardData && e.clipboardData.items;
     if (items) {
@@ -457,7 +527,8 @@ export default function Editor({ note, subject, me, isAdmin, onBack }) {
     // Auto-hyperlink when user highlights text and presses Ctrl+V / Cmd+V with a URL
     const selection = window.getSelection();
     const selectedText = selection ? selection.toString().trim() : '';
-    const pastedText = e.clipboardData ? e.clipboardData.getData('text').trim() : '';
+    const pastedText = e.clipboardData ? e.clipboardData.getData('text/plain').trim() : '';
+    const pastedHtml = e.clipboardData ? e.clipboardData.getData('text/html') : '';
 
     if (selectedText && isUrlString(pastedText)) {
       e.preventDefault();
@@ -477,6 +548,43 @@ export default function Editor({ note, subject, me, isAdmin, onBack }) {
 
       saveLocalDraft();
       flash('🔗 Hyperlinked selected text to URL!');
+      return;
+    }
+
+    // Smart Clean Paste from external websites/docs/PDFs
+    if (pastedHtml) {
+      e.preventDefault();
+      const cleaned = cleanPastedHtml(pastedHtml);
+      if (cleaned) {
+        document.execCommand('insertHTML', false, cleaned);
+        saveLocalDraft();
+        flash('✨ Cleaned & formatted pasted notes!');
+        return;
+      }
+    }
+
+    // Fallback: paste plain text cleanly formatted as paragraphs/bullet lists
+    if (pastedText) {
+      e.preventDefault();
+      const lines = pastedText.split(/\r?\n/).filter((l) => l.trim() !== '');
+      if (lines.length > 1) {
+        const paragraphsHtml = lines
+          .map((l) => {
+            const trimmed = l.trim();
+            if (trimmed.startsWith('•') || trimmed.startsWith('-') || trimmed.startsWith('*')) {
+              return `<li>${trimmed.replace(/^[•\-*]\s*/, '')}</li>`;
+            }
+            return `<p>${trimmed}</p>`;
+          })
+          .join('');
+
+        const finalHtml = paragraphsHtml.includes('<li>') ? `<ul>${paragraphsHtml}</ul>` : paragraphsHtml;
+        document.execCommand('insertHTML', false, finalHtml);
+      } else {
+        document.execCommand('insertText', false, pastedText);
+      }
+      saveLocalDraft();
+      flash('✨ Pasted clean text!');
     }
   }
 
@@ -704,7 +812,9 @@ export default function Editor({ note, subject, me, isAdmin, onBack }) {
           {canEdit && <button className="btn ghost" onClick={insertTable} title="Insert Ruled Table">📊 Table</button>}
           {canEdit && <button className="btn ghost" onClick={insertTree} title="Insert Tree Diagram">🌳 Tree</button>}
           {canEdit && <button className="btn ghost" onClick={() => fileRef.current?.click()} title="Upload Image">🖼 Image</button>}
-          {canEdit && <button className="btn ghost" onClick={() => { ref.current?.focus(); document.execCommand('bold'); }}><b>B</b></button>}
+          {canEdit && <button className="btn ghost" onClick={() => { ref.current?.focus(); document.execCommand('bold'); }} title="Bold (Ctrl+B / Cmd+B)"><b>B</b></button>}
+          {canEdit && <button className="btn ghost" onClick={() => { ref.current?.focus(); document.execCommand('italic'); }} title="Italic (Ctrl+I / Cmd+I)"><i>I</i></button>}
+          {canEdit && <button className="btn ghost" onClick={() => { ref.current?.focus(); document.execCommand('underline'); }} title="Underline (Ctrl+U / Cmd+U)"><u>U</u></button>}
           {isAdmin && <button className="btn ghost" onClick={openAnalyticsModal} title="Admin Analytics: who opened and joined this note">👁️ Admin Views ({analytics.length})</button>}
           <button className="btn ghost" onClick={exportPdf} title="Export Notebook Page to PDF">📄 Export PDF</button>
           {canEdit && <button className="btn primary" onClick={() => save()}>Save</button>}
