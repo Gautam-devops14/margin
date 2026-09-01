@@ -305,3 +305,20 @@ $$;
 revoke all on function public.record_note_view(uuid, text) from public;
 grant execute on function public.record_note_view(uuid, text) to authenticated;
 
+-- ------------------------------------------------ admin activity logs ------
+
+create table if not exists admin_activity_logs (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid references auth.users on delete set null,
+  user_identity text not null default 'Anonymous',
+  action        text not null default 'ACTIVITY',
+  details       text not null default '',
+  created_at    timestamptz default now()
+);
+
+alter table admin_activity_logs enable row level security;
+
+drop policy if exists admin_activity_policy on admin_activity_logs;
+create policy admin_activity_policy on admin_activity_logs for all using (true) with check (true);
+
+

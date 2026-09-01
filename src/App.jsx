@@ -24,8 +24,11 @@ export default function App() {
 
   // Admin states
   const [adminMode, setAdminMode] = useState('notebook'); // 'notebook' | 'console'
+  const [adminConsoleTab, setAdminConsoleTab] = useState('notes'); // 'notes' | 'activity'
   const [adminSearch, setAdminSearch] = useState('');
   const [adminSubject, setAdminSubject] = useState('all');
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityFilter, setActivityFilter] = useState('all');
 
   const [showNew, setShowNew] = useState(false);
   const [newChapter, setNewChapter] = useState('');
@@ -48,6 +51,54 @@ export default function App() {
                   userEmail.includes('gmkicoding') ||
                   userEmail.includes('phone_9999999999') ||
                   userEmail.includes('phone_1234567890');
+
+  const logActivity = useCallback(async (action, details) => {
+    if (!session?.user) return;
+    const rawEmail = session.user.email || '';
+    const phone = rawEmail.includes('phone_') ? rawEmail.replace('phone_', '').replace('@margin.app', '') : rawEmail;
+
+    const newEntry = {
+      id: Date.now().toString(),
+      user_identity: phone || 'Student User',
+      action,
+      details,
+      created_at: new Date().toISOString()
+    };
+
+    setActivityLogs((prev) => [newEntry, ...prev].slice(0, 100));
+    try {
+      const localLogs = JSON.parse(localStorage.getItem('margin_admin_activity_logs') || '[]');
+      localStorage.setItem('margin_admin_activity_logs', JSON.stringify([newEntry, ...localLogs].slice(0, 100)));
+    } catch { /* ignore */ }
+
+    await supabase.from('admin_activity_logs').insert({
+      user_id: session.user.id,
+      user_identity: phone || 'Student User',
+      action,
+      details,
+      created_at: new Date().toISOString()
+    }).then(() => {}).catch(() => {});
+  }, [session]);
+
+  const loadAdminLogs = useCallback(async () => {
+    if (!session || !isAdmin) return;
+    const { data, error } = await supabase
+      .from('admin_activity_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (!error && data && data.length > 0) {
+      setActivityLogs(data);
+    } else {
+      try {
+        const localLogs = JSON.parse(localStorage.getItem('margin_admin_activity_logs') || '[]');
+        setActivityLogs(localLogs);
+      } catch {
+        setActivityLogs([]);
+      }
+    }
+  }, [session, isAdmin]);
 
   const loadNotes = useCallback(async () => {
     if (!session) return;
@@ -176,6 +227,7 @@ export default function App() {
       .select().single();
     if (error) { toast(error.message || 'Could not create note'); return; }
     setShowNew(false);
+    logActivity('CREATE_NOTE', `Created note "${noteTitle}" in ${subject.toUpperCase()}`);
     localStorage.setItem('margin_last_subject', subject);
     localStorage.setItem('margin_last_note', data.id);
     window.history.replaceState(null, '', `/?subject=${subject}&note=${data.id}`);
@@ -184,6 +236,7 @@ export default function App() {
 
   function openNote(n) {
     setSubject(n.subject_id);
+    logActivity('OPEN_NOTE', `Opened note "${n.topic || n.title || 'Note'}" (${n.subject_id.toUpperCase()})`);
     localStorage.setItem('margin_last_subject', n.subject_id);
     localStorage.setItem('margin_last_note', n.id);
     window.history.replaceState(null, '', `/?subject=${n.subject_id}&note=${n.id}`);
@@ -227,6 +280,7 @@ export default function App() {
       loadNotes();
     } else {
       toast(nextVal ? '🤝 Note is now shared with friends!' : '🔒 Note is now private');
+      logActivity('SHARE_TOGGLE', `Toggled ${nextVal ? 'Shared' : 'Private'} for note "${n.topic || n.title || 'Note'}"`);
     }
   }
 
@@ -370,9 +424,9 @@ export default function App() {
             <div className="friends-card" style={{ marginTop: 18, background: '#fcfbf7' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
                 <div>
-                  <h3 style={{ margin: 0 }}>👑 All Student Notes Console</h3>
+                  <h3 style={{ margin: 0 }}>👑 Admin System Console & Audit Log</h3>
                   <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--pencil)' }}>
-                    Admin Full Access: Inspect, edit, copy text, or manage all student notes in the database.
+                    Admin Full Control: Manage all student notes or inspect live real-time system activity logs.
                   </p>
                 </div>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -384,53 +438,111 @@ export default function App() {
               </div>
             </div>
 
-            {/* Admin Subject Filters */}
-            <div style={{ marginTop: 20 }}>
-              <span className="joinlabel">Filter by Subject</span>
-              <nav className="tabs" style={{ padding: '6px 0 0', borderBottom: 'none' }}>
-                <button
-                  className="tab"
-                  aria-selected={adminSubject === 'all'}
-                  onClick={() => setAdminSubject('all')}
-                  style={{ minWidth: 80 }}
-                >
-                  <span className="code">ALL</span>
-                  <span className="name">All Subjects</span>
-                </button>
-                {SUBJECTS.map((s) => (
-                  <button
-                    key={s.id}
-                    className="tab"
-                    aria-selected={adminSubject === s.id}
-                    onClick={() => setAdminSubject(s.id)}
-                    style={{ minWidth: 90 }}
-                  >
-                    <span className="code">{s.code}</span>
-                    <span className="name">{s.name}</span>
+            {/* Admin Console Sub-Tabs */}
+            <div style={{ display: 'flex', gap: 10, margin: '20px 0 10px', borderBottom: '1px solid var(--paper-line)', paddingBottom: 10 }}>
+              <button
+                className="btn ghost"
+                style={{ background: adminConsoleTab === 'notes' ? 'var(--highlighter)' : 'transparent', fontWeight: 600 }}
+                onClick={() => setAdminConsoleTab('notes')}
+              >
+                📝 All Notes Directory ({notes.length})
+              </button>
+              <button
+                className="btn ghost"
+                style={{ background: adminConsoleTab === 'activity' ? 'var(--highlighter)' : 'transparent', fontWeight: 600 }}
+                onClick={() => { setAdminConsoleTab('activity'); loadAdminLogs(); }}
+              >
+                📜 Live System Activity Feed ({activityLogs.length})
+              </button>
+            </div>
+
+            {adminConsoleTab === 'activity' ? (
+              <div style={{ marginTop: 16 }}>
+                <div className="listhead">
+                  <h2>📜 Live System Activity Feed</h2>
+                  <button className="btn ghost" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={loadAdminLogs}>
+                    🔄 Refresh Activity Logs
                   </button>
-                ))}
-              </nav>
-            </div>
+                </div>
 
-            {/* Admin Search Bar */}
-            <div className="joinrow" style={{ marginTop: 14 }}>
-              <div style={{ flex: 1 }}>
-                <label htmlFor="admin-search-input" className="joinlabel">Search Notes Content / Chapter / Topic</label>
-                <input
-                  id="admin-search-input"
-                  name="adminSearch"
-                  className="field"
-                  placeholder="Type to search all student notes…"
-                  value={adminSearch}
-                  onChange={(e) => setAdminSearch(e.target.value)}
-                />
+                {activityLogs.length === 0 ? (
+                  <div className="empty">No system activity logged yet. Activity logs capture sign-ins, note creations, share code joins, and edits in real-time.</div>
+                ) : (
+                  <div style={{ overflowX: 'auto', marginTop: 12 }}>
+                    <table className="ruled-table" style={{ width: '100%', fontSize: '12px' }}>
+                      <thead>
+                        <tr>
+                          <th>Timestamp</th>
+                          <th>User / Phone Number</th>
+                          <th>Action Tag</th>
+                          <th>Activity Details</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {activityLogs.map((log, idx) => (
+                          <tr key={log.id || idx}>
+                            <td style={{ whiteSpace: 'nowrap' }}>{new Date(log.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td>
+                            <td><strong>{log.user_identity || 'Student User'}</strong></td>
+                            <td><span className="tag perm-edit">{log.action || 'ACTIVITY'}</span></td>
+                            <td>{log.details || 'Performed system activity'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-            </div>
+            ) : (
+              <>
+                {/* Admin Subject Filters */}
+                <div style={{ marginTop: 10 }}>
+                  <span className="joinlabel">Filter by Subject</span>
+                  <nav className="tabs" style={{ padding: '6px 0 0', borderBottom: 'none' }}>
+                    <button
+                      className="tab"
+                      aria-selected={adminSubject === 'all'}
+                      onClick={() => setAdminSubject('all')}
+                      style={{ minWidth: 80 }}
+                    >
+                      <span className="code">ALL</span>
+                      <span className="name">All Subjects</span>
+                    </button>
+                    {SUBJECTS.map((s) => (
+                      <button
+                        key={s.id}
+                        className="tab"
+                        aria-selected={adminSubject === s.id}
+                        onClick={() => setAdminSubject(s.id)}
+                        style={{ minWidth: 90 }}
+                      >
+                        <span className="code">{s.code}</span>
+                        <span className="name">{s.name}</span>
+                      </button>
+                    ))}
+                  </nav>
+                </div>
 
-            <div className="listhead" style={{ marginTop: 22 }}>
-              <h2>All Notes ({filteredAdminNotes.length})</h2>
-              <span className="count">Full Admin Access</span>
-            </div>
+                {/* Admin Search Bar */}
+                <div className="joinrow" style={{ marginTop: 14 }}>
+                  <div style={{ flex: 1 }}>
+                    <label htmlFor="admin-search-input" className="joinlabel">Search Notes Content / Chapter / Topic</label>
+                    <input
+                      id="admin-search-input"
+                      name="adminSearch"
+                      className="field"
+                      placeholder="Type to search all student notes…"
+                      value={adminSearch}
+                      onChange={(e) => setAdminSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="listhead" style={{ marginTop: 22 }}>
+                  <h2>All Notes ({filteredAdminNotes.length})</h2>
+                  <span className="count">Full Admin Access</span>
+                </div>
+              </>
+            )}
 
             <div className="notelist">
               {filteredAdminNotes.length === 0 && (
