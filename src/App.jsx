@@ -27,6 +27,7 @@ export default function App() {
   const [adminConsoleTab, setAdminConsoleTab] = useState('notes'); // 'notes' | 'activity'
   const [adminSearch, setAdminSearch] = useState('');
   const [adminSubject, setAdminSubject] = useState('all');
+  const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'title' | 'oldest'
   const [activityLogs, setActivityLogs] = useState([]);
   const [activityFilter, setActivityFilter] = useState('all');
 
@@ -34,7 +35,7 @@ export default function App() {
   const [newChapter, setNewChapter] = useState('');
   const [newTopic, setNewTopic] = useState('');
 
-  // Persistent Auth Session setup
+  // Persistent Auth Session setup & Cmd+K listener
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session);
@@ -43,7 +44,22 @@ export default function App() {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
     });
-    return () => sub.subscription.unsubscribe();
+
+    const handleKbd = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        const input = document.getElementById('admin-search-input');
+        if (input) {
+          e.preventDefault();
+          input.focus();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKbd);
+
+    return () => {
+      sub.subscription.unsubscribe();
+      window.removeEventListener('keydown', handleKbd);
+    };
   }, []);
 
   const userEmail = (session?.user?.email || '').toLowerCase();
@@ -421,18 +437,45 @@ export default function App() {
         {isAdmin && adminMode === 'console' ? (
           /* ================================================= ADMIN SYSTEM CONSOLE ================================================= */
           <div className="sheetbody">
-            <div className="friends-card" style={{ marginTop: 18, background: '#fcfbf7' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            {/* KPI Stat Cards Banner (Image 2) */}
+            <div className="admin-banner-card">
+              <div className="admin-banner-header">
                 <div>
-                  <h3 style={{ margin: 0 }}>👑 Admin System Console & Audit Log</h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span className="admin-crown-icon">👑</span>
+                    <h3 style={{ margin: 0, fontSize: '18px' }}>Admin Console</h3>
+                  </div>
                   <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--pencil)' }}>
-                    Admin Full Control: Manage all student notes or inspect live real-time system activity logs.
+                    Full access • Notes management & system monitoring
                   </p>
                 </div>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button className="btn primary" onClick={() => setAdminMode('notebook')}>📚 Go to Notebook Mode</button>
-                  <div className="tag perm-edit" style={{ fontSize: '12px', padding: '6px 10px' }}>
-                    {notes.length} Total Notes
+                <button className="btn ghost" style={{ background: '#fff', border: '1px solid var(--ink)', fontWeight: 600 }} onClick={() => setAdminMode('notebook')}>
+                  📖 Notebook Mode
+                </button>
+              </div>
+
+              <div className="stat-cards-grid">
+                <div className="stat-card">
+                  <div className="stat-icon red">📄</div>
+                  <div>
+                    <div className="stat-number">{notes.length}</div>
+                    <div className="stat-label">Total Notes</div>
+                  </div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-icon green">👥</div>
+                  <div>
+                    <div className="stat-number">{notes.filter(n => n.share_with_friends).length}</div>
+                    <div className="stat-label">Shared Notes</div>
+                  </div>
+                </div>
+
+                <div className="stat-card">
+                  <div className="stat-icon gold">🔒</div>
+                  <div>
+                    <div className="stat-number">{notes.filter(n => !n.share_with_friends).length}</div>
+                    <div className="stat-label">Private Notes</div>
                   </div>
                 </div>
               </div>
@@ -494,92 +537,104 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* Admin Subject Filters */}
-                <div style={{ marginTop: 10 }}>
-                  <span className="joinlabel">Filter by Subject</span>
-                  <nav className="tabs" style={{ padding: '6px 0 0', borderBottom: 'none' }}>
-                    <button
-                      className="tab"
-                      aria-selected={adminSubject === 'all'}
-                      onClick={() => setAdminSubject('all')}
-                      style={{ minWidth: 80 }}
-                    >
-                      <span className="code">ALL</span>
-                      <span className="name">All Subjects</span>
-                    </button>
-                    {SUBJECTS.map((s) => (
-                      <button
-                        key={s.id}
-                        className="tab"
-                        aria-selected={adminSubject === s.id}
-                        onClick={() => setAdminSubject(s.id)}
-                        style={{ minWidth: 90 }}
-                      >
-                        <span className="code">{s.code}</span>
-                        <span className="name">{s.name}</span>
-                      </button>
-                    ))}
-                  </nav>
-                </div>
-
-                {/* Admin Search Bar */}
-                <div className="joinrow" style={{ marginTop: 14 }}>
-                  <div style={{ flex: 1 }}>
-                    <label htmlFor="admin-search-input" className="joinlabel">Search Notes Content / Chapter / Topic</label>
+                {/* Search Bar with ⌘ K Badge */}
+                <div style={{ marginTop: 16 }}>
+                  <div className="search-wrapper">
+                    <span className="search-icon-left">🔍</span>
                     <input
                       id="admin-search-input"
                       name="adminSearch"
-                      className="field"
-                      placeholder="Type to search all student notes…"
+                      className="search-input-field"
+                      placeholder="Search notes, chapters, topics…"
                       value={adminSearch}
                       onChange={(e) => setAdminSearch(e.target.value)}
                     />
+                    <span className="kbd-badge">⌘ K</span>
                   </div>
                 </div>
 
-                <div className="listhead" style={{ marginTop: 22 }}>
+                {/* Subject Filter Pills & Sort Dropdown */}
+                <div className="filter-pills-row">
+                  <div className="pill-tabs">
+                    <button
+                      className={`pill-btn ${adminSubject === 'all' ? 'active' : ''}`}
+                      onClick={() => setAdminSubject('all')}
+                    >
+                      All <span className="pill-count">{notes.length}</span>
+                    </button>
+                    {SUBJECTS.map((s) => {
+                      const count = notes.filter(n => n.subject_id === s.id).length;
+                      return (
+                        <button
+                          key={s.id}
+                          className={`pill-btn ${adminSubject === s.id ? 'active' : ''}`}
+                          onClick={() => setAdminSubject(s.id)}
+                        >
+                          {s.code} <span className="pill-count">{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                    <option value="recent">Sort: Recently Updated</option>
+                    <option value="title">Sort: Title A-Z</option>
+                    <option value="oldest">Sort: Oldest</option>
+                  </select>
+                </div>
+
+                <div className="listhead" style={{ marginTop: 18 }}>
                   <h2>All Notes ({filteredAdminNotes.length})</h2>
                   <span className="count">Full Admin Access</span>
                 </div>
+
+                <div className="notelist">
+                  {filteredAdminNotes.length === 0 && (
+                    <div className="empty">No notes match your search/filter criteria.</div>
+                  )}
+                  {filteredAdminNotes.map((n) => (
+                    <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
+                      <div style={{ flex: 1 }}>
+                        <div className="notecard-tags">
+                          <span className="subject-pill-tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
+                          {n.share_with_friends ? (
+                            <span className="stencil-tag shared">SHARED WITH FRIENDS</span>
+                          ) : (
+                            <span className="stencil-tag private">PRIVATE</span>
+                          )}
+                        </div>
+
+                        <h3 className="notecard-title">{n.topic || n.title || 'Untitled topic'}</h3>
+                        <div className="notecard-subtitle">{subjectById(n.subject_id)?.name || 'Course Subject'}</div>
+                        <div className="notecard-meta-line">
+                          {n.chapter ? `Chapter ${n.chapter}` : 'General Notes'} {n.topic ? `• ${n.topic}` : ''}
+                        </div>
+                      </div>
+
+                      <div className="notecard-right">
+                        <div className="share-status-indicator">
+                          <span className={`status-dot ${n.share_with_friends ? 'green' : 'gray'}`}></span>
+                          <span>{n.share_with_friends ? 'Shared' : 'Private'}</span>
+                          <span style={{ color: 'var(--pencil)', fontSize: '11px', marginLeft: 4 }}>{fmtDate(n.updated_at)}</span>
+                        </div>
+
+                        <div className="notecard-actions">
+                          <button className="btn ghost card-btn" onClick={(e) => copyNoteText(n, e)} title="Copy note text to clipboard">
+                            📋 Copy
+                          </button>
+                          <button className="btn primary card-btn-primary" onClick={() => openNote(n)} title="Open and Edit Note">
+                            ✏️ Edit
+                          </button>
+                          <button className="kebab-btn" title="Toggle Sharing" onClick={(e) => toggleNoteShare(n, e)}>
+                            ⋮
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </>
             )}
-
-            <div className="notelist">
-              {filteredAdminNotes.length === 0 && (
-                <div className="empty">No notes match your search/filter criteria.</div>
-              )}
-              {filteredAdminNotes.map((n) => (
-                <div key={n.id} className="notecard">
-                  <div style={{ flex: 1 }} onClick={() => openNote(n)}>
-                    <div className="chaptertag">
-                      {n.chapter || 'Chapter'}
-                      <span className="tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
-                      {n.share_with_friends && <span className="tag perm-edit">Shared with Friends</span>}
-                    </div>
-                    <h3>{n.topic || n.title || 'Untitled topic'}</h3>
-                  </div>
-
-                  <div className="cardright" style={{ gap: 8, alignItems: 'center' }}>
-                    <label className="toggle-wrap" style={{ margin: 0, cursor: 'pointer' }} onClick={(e) => toggleNoteShare(n, e)} title="Toggle Share with Friends">
-                      <div className={`toggle-switch ${n.share_with_friends ? 'on' : ''}`}>
-                        <div className="toggle-slider" />
-                      </div>
-                      <span style={{ fontSize: '11px', fontWeight: 600 }}>{n.share_with_friends ? 'Shared' : 'Private'}</span>
-                    </label>
-                    <span className="meta">{fmtDate(n.updated_at)}</span>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <button className="btn ghost" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={(e) => copyNoteText(n, e)} title="Copy note text to clipboard">
-                        📋 Copy Text
-                      </button>
-                      <button className="btn primary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => openNote(n)} title="Open and Edit Note">
-                        ✏️ Edit Note
-                      </button>
-                      <button className="del" title="Delete note" onClick={(e) => deleteNote(n, e)}>✕</button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
           </div>
         ) : (
           /* ================================================= NOTEBOOK VIEW (STUDENT & ADMIN CREATOR) ================================================= */
@@ -629,26 +684,42 @@ export default function App() {
                   <div className="empty">No notes in {subj.name} yet. Click <b>+ New note</b> to begin a chapter.</div>
                 )}
                 {mine.map((n) => (
-                  <div key={n.id} className="notecard" onClick={() => openNote(n)}>
+                  <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
                     <div style={{ flex: 1 }}>
-                      <div className="chaptertag">
-                        {n.chapter || 'Chapter'}
-                        {n.share_with_friends && <span className="tag perm-edit">Shared with Friends</span>}
+                      <div className="notecard-tags">
+                        <span className="subject-pill-tag">{subj.code}</span>
+                        {n.share_with_friends ? (
+                          <span className="stencil-tag shared">SHARED WITH FRIENDS</span>
+                        ) : (
+                          <span className="stencil-tag private">PRIVATE</span>
+                        )}
                       </div>
-                      <h3>{n.topic || n.title || 'Untitled topic'}</h3>
+
+                      <h3 className="notecard-title">{n.topic || n.title || 'Untitled topic'}</h3>
+                      <div className="notecard-subtitle">{subj.name}</div>
+                      <div className="notecard-meta-line">
+                        {n.chapter ? `Chapter ${n.chapter}` : 'General Notes'} {n.topic ? `• ${n.topic}` : ''}
+                      </div>
                     </div>
-                    <div className="cardright" style={{ gap: 8, alignItems: 'center' }}>
-                      <label className="toggle-wrap" style={{ margin: 0, cursor: 'pointer' }} onClick={(e) => toggleNoteShare(n, e)} title="Toggle Share with Friends">
-                        <div className={`toggle-switch ${n.share_with_friends ? 'on' : ''}`}>
-                          <div className="toggle-slider" />
-                        </div>
-                        <span style={{ fontSize: '11px', fontWeight: 600 }}>{n.share_with_friends ? 'Shared' : 'Private'}</span>
-                      </label>
-                      <span className="meta">{fmtDate(n.updated_at)}</span>
-                      <button className="btn ghost" style={{ padding: '3px 8px', fontSize: '11px' }} onClick={(e) => copyDirectNoteLink(n, e)} title="Copy direct ID permalink for this note">
-                        🔗 Link
-                      </button>
-                      <button className="del" title="Delete note" onClick={(e) => deleteNote(n, e)}>✕</button>
+
+                    <div className="notecard-right">
+                      <div className="share-status-indicator">
+                        <span className={`status-dot ${n.share_with_friends ? 'green' : 'gray'}`}></span>
+                        <span>{n.share_with_friends ? 'Shared' : 'Private'}</span>
+                        <span style={{ color: 'var(--pencil)', fontSize: '11px', marginLeft: 4 }}>{fmtDate(n.updated_at)}</span>
+                      </div>
+
+                      <div className="notecard-actions">
+                        <button className="btn ghost card-btn" onClick={(e) => copyDirectNoteLink(n, e)} title="Copy direct ID permalink for this note">
+                          🔗 Link
+                        </button>
+                        <button className="btn primary card-btn-primary" onClick={() => openNote(n)} title="Open and Edit Note">
+                          ✏️ Edit
+                        </button>
+                        <button className="kebab-btn" title="Options" onClick={(e) => toggleNoteShare(n, e)}>
+                          ⋮
+                        </button>
+                      </div>
                     </div>
                   </div>
                 ))}
