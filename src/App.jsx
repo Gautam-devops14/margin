@@ -3,6 +3,8 @@ import { supabase } from './supabaseClient';
 import { SUBJECTS, subjectById } from './lib/subjects';
 import Auth from './components/Auth';
 import Editor from './components/Editor';
+import Revisions from './components/Revisions';
+import Groups from './components/Groups';
 
 function fmtDate(ts) {
   if (!ts) return '';
@@ -13,6 +15,7 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [ready, setReady] = useState(false);
   const [view, setView] = useState('home');
+  const [appSection, setAppSection] = useState('notes');
   const [subject, setSubject] = useState(SUBJECTS[0].id);
   const [notes, setNotes] = useState([]);
   const [shared, setShared] = useState([]);
@@ -640,21 +643,36 @@ export default function App() {
           /* ================================================= NOTEBOOK VIEW (STUDENT & ADMIN CREATOR) ================================================= */
           <>
             <nav className="tabs" role="tablist">
-              {SUBJECTS.map((s) => (
-                <button
-                  key={s.id}
-                  role="tab"
-                  aria-selected={s.id === subject}
-                  className="tab"
-                  onClick={() => selectSubject(s.id)}
-                >
-                  <span className="code">{s.code}</span>
-                  <span className="name">{s.name}</span>
-                </button>
-              ))}
+              <button role="tab" aria-selected={appSection === 'notes'} className="tab" onClick={() => setAppSection('notes')}>
+                <span className="code">📒</span><span className="name">Notes</span>
+              </button>
+              <button role="tab" aria-selected={appSection === 'revisions'} className="tab" onClick={() => setAppSection('revisions')}>
+                <span className="code">🔔</span><span className="name">Revisions</span>
+              </button>
+              <button role="tab" aria-selected={appSection === 'groups'} className="tab" onClick={() => setAppSection('groups')}>
+                <span className="code">👥</span><span className="name">Groups</span>
+              </button>
             </nav>
 
+            {appSection === 'revisions' ? (
+              <Revisions session={session} openNote={openNote} toast={toast} />
+            ) : appSection === 'groups' ? (
+              <Groups session={session} openNote={openNote} toast={toast} />
+            ) : (
             <div className="sheetbody">
+              <div className="filter-pills-row" style={{ padding: '0 0 16px 0', borderBottom: '1px solid var(--paper-line)', marginBottom: '16px' }}>
+                <div className="pill-tabs">
+                  {SUBJECTS.map((s) => (
+                    <button
+                      key={s.id}
+                      className={`pill-btn ${subject === s.id ? 'active' : ''}`}
+                      onClick={() => selectSubject(s.id)}
+                    >
+                      {s.code}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="joinrow">
                 <div style={{ flex: 1 }}>
                   <label htmlFor="join-code-input" className="joinlabel">Enter friend's share code</label>
@@ -784,6 +802,7 @@ export default function App() {
                 </>
               )}
             </div>
+            )}
           </>
         )}
       </div>
