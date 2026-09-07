@@ -408,35 +408,50 @@ export default function App() {
   const subj = subjectById(subject) || SUBJECTS[0];
 
   return (
-    <div className="desk">
-      <div className="sheet">
-        <header className="masthead">
-          <div className="brand">
-            <div>
-              <div className="brandname">
-                Margin<mark>*</mark>
-                {isAdmin && <span className="tag perm-edit" style={{ marginLeft: 10, fontSize: '11px' }}>👑 Admin Active</span>}
-              </div>
-              <div className="brandsub">
-                {isAdmin ? `system admin — ${userEmail}` : 'your college notes, shared'}
-              </div>
-            </div>
-          </div>
+    <div className="app-shell">
+      {/* Mobile Top Bar */}
+      <div className="mobile-top-bar d-md-none">
+        <div className="app-brand" style={{marginBottom: 0, padding: 0}}>Margin<mark>*</mark></div>
+        <button className="btn ghost" style={{ fontSize: '12px' }} onClick={() => supabase.auth.signOut()}>Sign out</button>
+      </div>
 
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            {isAdmin && (
-              <button
-                className="btn ghost"
-                style={{ background: adminMode === 'console' ? 'var(--highlighter)' : 'var(--paper)', color: 'var(--ink)' }}
-                onClick={() => setAdminMode(adminMode === 'notebook' ? 'console' : 'notebook')}
-              >
-                {adminMode === 'notebook' ? '👑 System Console' : '📚 Notebook Mode'}
-              </button>
-            )}
-            <button className="btn ghost" onClick={() => supabase.auth.signOut()}>Sign out</button>
-          </div>
-        </header>
+      {/* Desktop Sidebar */}
+      <nav className="app-nav">
+        <div className="app-brand">Margin<mark>*</mark></div>
+        
+        <div className="nav-links">
+          <button className={`nav-btn ${appSection === 'notes' ? 'active' : ''}`} onClick={() => setAppSection('notes')}>
+            <span style={{ fontSize: '18px' }}>📒</span> Notes
+          </button>
+          <button className={`nav-btn ${appSection === 'revisions' ? 'active' : ''}`} onClick={() => setAppSection('revisions')}>
+            <span style={{ fontSize: '18px' }}>🔔</span> Revisions
+          </button>
+          <button className={`nav-btn ${appSection === 'groups' ? 'active' : ''}`} onClick={() => setAppSection('groups')}>
+            <span style={{ fontSize: '18px' }}>👥</span> Groups
+          </button>
+        </div>
 
+        <div style={{ flex: 1 }} />
+        
+        {isAdmin && (
+          <button 
+            className="nav-btn" 
+            onClick={() => setAdminMode(adminMode === 'notebook' ? 'console' : 'notebook')}
+            style={{ background: adminMode === 'console' ? 'var(--highlighter)' : 'transparent', marginBottom: 8 }}
+          >
+            👑 {adminMode === 'notebook' ? 'Admin Console' : 'Notebook Mode'}
+          </button>
+        )}
+        
+        <div style={{ fontSize: '11px', color: 'var(--pencil)', padding: '0 12px', wordBreak: 'break-all' }}>
+          {userEmail}
+        </div>
+        <button className="nav-btn" onClick={() => supabase.auth.signOut()} style={{ marginTop: 8 }}>
+          Sign out
+        </button>
+      </nav>
+
+      <main className="app-main">
         {isAdmin && adminMode === 'console' ? (
           /* ================================================= ADMIN SYSTEM CONSOLE ================================================= */
           <div className="sheetbody">
@@ -642,25 +657,19 @@ export default function App() {
         ) : (
           /* ================================================= NOTEBOOK VIEW (STUDENT & ADMIN CREATOR) ================================================= */
           <>
-            <nav className="tabs" role="tablist">
-              <button role="tab" aria-selected={appSection === 'notes'} className="tab" onClick={() => setAppSection('notes')}>
-                <span className="code">📒</span><span className="name">Notes</span>
-              </button>
-              <button role="tab" aria-selected={appSection === 'revisions'} className="tab" onClick={() => setAppSection('revisions')}>
-                <span className="code">🔔</span><span className="name">Revisions</span>
-              </button>
-              <button role="tab" aria-selected={appSection === 'groups'} className="tab" onClick={() => setAppSection('groups')}>
-                <span className="code">👥</span><span className="name">Groups</span>
-              </button>
-            </nav>
-
             {appSection === 'revisions' ? (
               <Revisions session={session} openNote={openNote} toast={toast} />
             ) : appSection === 'groups' ? (
               <Groups session={session} openNote={openNote} toast={toast} />
             ) : (
-            <div className="sheetbody">
-              <div className="filter-pills-row" style={{ padding: '0 0 16px 0', borderBottom: '1px solid var(--paper-line)', marginBottom: '16px' }}>
+            <div>
+              {/* Desktop specific top header for Notes */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+                <h1 style={{ fontFamily: 'var(--font-display)', margin: 0, fontSize: '32px', color: 'var(--ink)' }}>Notes</h1>
+                <button className="btn primary" onClick={openNewModal}>+ New Note</button>
+              </div>
+
+              <div className="filter-pills-row" style={{ padding: '0 0 16px 0', borderBottom: '1px solid rgba(0,0,0,0.06)', marginBottom: '24px' }}>
                 <div className="pill-tabs">
                   {SUBJECTS.map((s) => (
                     <button
@@ -689,12 +698,9 @@ export default function App() {
                 <button className="btn ghost" onClick={joinByCode}>Join note</button>
               </div>
 
-              <div className="listhead">
-                <h2>{subj.name}</h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                  <span className="count">{mine.length} {mine.length === 1 ? 'note' : 'notes'}</span>
-                  <button className="btn primary" onClick={openNewModal}>+ New note</button>
-                </div>
+              <div className="listhead" style={{ marginBottom: 16 }}>
+                <h2 style={{ fontSize: '20px' }}>{subj.name}</h2>
+                <span className="count">{mine.length} {mine.length === 1 ? 'note' : 'notes'}</span>
               </div>
 
               <div className="notelist">
@@ -805,7 +811,23 @@ export default function App() {
             )}
           </>
         )}
-      </div>
+      </main>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="mobile-bottom-nav">
+        <button className={`mobile-nav-btn ${appSection === 'notes' ? 'active' : ''}`} onClick={() => setAppSection('notes')}>
+          <span className="mobile-nav-icon">📒</span>
+          <span>Notes</span>
+        </button>
+        <button className={`mobile-nav-btn ${appSection === 'revisions' ? 'active' : ''}`} onClick={() => setAppSection('revisions')}>
+          <span className="mobile-nav-icon">🔔</span>
+          <span>Revisions</span>
+        </button>
+        <button className={`mobile-nav-btn ${appSection === 'groups' ? 'active' : ''}`} onClick={() => setAppSection('groups')}>
+          <span className="mobile-nav-icon">👥</span>
+          <span>Groups</span>
+        </button>
+      </nav>
 
       {showNew && (
         <div className="modal-backdrop" onClick={() => setShowNew(false)}>
