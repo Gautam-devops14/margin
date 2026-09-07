@@ -5,6 +5,7 @@ import Auth from './components/Auth';
 import Editor from './components/Editor';
 import Revisions from './components/Revisions';
 import Groups from './components/Groups';
+import DashboardSummary from './components/DashboardSummary';
 
 function fmtDate(ts) {
   if (!ts) return '';
@@ -16,7 +17,7 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [view, setView] = useState('home');
   const [appSection, setAppSection] = useState('notes');
-  const [subject, setSubject] = useState(SUBJECTS[0].id);
+  const [subject, setSubject] = useState('all');
   const [notes, setNotes] = useState([]);
   const [shared, setShared] = useState([]);
   const [friends, setFriends] = useState([]);
@@ -225,7 +226,14 @@ export default function App() {
 
   function toast(m) { setMsg(m); setTimeout(() => setMsg(''), 3200); }
 
-  function openNewModal() { setNewChapter(''); setNewTopic(''); setShowNew(true); }
+  const [newSubject, setNewSubject] = useState(SUBJECTS[0].id);
+
+  function openNewModal() { 
+    setNewChapter(''); 
+    setNewTopic(''); 
+    setNewSubject(subject === 'all' ? SUBJECTS[0].id : subject);
+    setShowNew(true); 
+  }
 
   async function createNote() {
     const ch = newChapter.trim() || 'General Notes';
@@ -236,7 +244,7 @@ export default function App() {
       .from('notes')
       .insert({
         user_id: session.user.id,
-        subject_id: subject,
+        subject_id: newSubject,
         chapter: ch,
         topic: tp,
         title: noteTitle,
@@ -404,8 +412,17 @@ export default function App() {
     return matchesSub && matchesQuery;
   });
 
-  const mine = notes.filter((n) => n.subject_id === subject);
-  const subj = subjectById(subject) || SUBJECTS[0];
+  const q = adminSearch.trim().toLowerCase();
+  const mine = notes.filter((n) => {
+    const matchesSub = subject === 'all' || n.subject_id === subject;
+    const matchesQuery = !q ||
+      (n.chapter || '').toLowerCase().includes(q) ||
+      (n.topic || '').toLowerCase().includes(q) ||
+      (n.title || '').toLowerCase().includes(q) ||
+      (n.content || '').toLowerCase().includes(q);
+    return matchesSub && matchesQuery;
+  });
+  const subj = subject === 'all' ? { id: 'all', name: 'Recent Notes', code: 'All' } : (subjectById(subject) || SUBJECTS[0]);
 
   return (
     <div className="app-shell">
@@ -669,8 +686,11 @@ export default function App() {
                 <button className="btn primary" onClick={openNewModal}>+ New Note</button>
               </div>
 
+              <DashboardSummary session={session} setAppSection={setAppSection} />
+
               <div className="filter-pills-row" style={{ padding: '0 0 16px 0', borderBottom: '1px solid rgba(0,0,0,0.06)', marginBottom: '24px' }}>
-                <div className="pill-tabs">
+                <div className="pill-tabs" style={{ flex: 1 }}>
+                  <button className={`pill-btn ${subject === 'all' ? 'active' : ''}`} onClick={() => selectSubject('all')}>All</button>
                   {SUBJECTS.map((s) => (
                     <button
                       key={s.id}
@@ -680,6 +700,15 @@ export default function App() {
                       {s.code}
                     </button>
                   ))}
+                </div>
+                <div className="search-wrapper" style={{ flex: 1, maxWidth: 300 }}>
+                  <span className="search-icon-left">🔍</span>
+                  <input
+                    className="search-input-field"
+                    placeholder="Search notes..."
+                    value={adminSearch}
+                    onChange={(e) => setAdminSearch(e.target.value)}
+                  />
                 </div>
               </div>
               <div className="joinrow">
@@ -711,7 +740,7 @@ export default function App() {
                   <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
                     <div style={{ flex: 1 }}>
                       <div className="notecard-tags">
-                        <span className="subject-pill-tag">{subj.code}</span>
+                        <span className="subject-pill-tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
                         {n.share_with_friends ? (
                           <span className="stencil-tag shared">SHARED WITH FRIENDS</span>
                         ) : (
@@ -719,29 +748,19 @@ export default function App() {
                         )}
                       </div>
 
-                      <h3 className="notecard-title">{n.topic || n.title || 'Untitled topic'}</h3>
-                      <div className="notecard-subtitle">{subj.name}</div>
-                      <div className="notecard-meta-line">
-                        {n.chapter ? `Chapter ${n.chapter}` : 'General Notes'} {n.topic ? `• ${n.topic}` : ''}
+                      <h3 className="notecard-title" style={{ marginTop: 8 }}>{n.topic || n.title || 'Untitled topic'}</h3>
+                      <div className="notecard-meta-line" style={{ marginTop: 4 }}>
+                        {subjectById(n.subject_id)?.name} • Updated {fmtDate(n.updated_at)}
                       </div>
                     </div>
 
-                    <div className="notecard-right">
-                      <div className="share-status-indicator">
-                        <span className={`status-dot ${n.share_with_friends ? 'green' : 'gray'}`}></span>
-                        <span>{n.share_with_friends ? 'Shared' : 'Private'}</span>
-                        <span style={{ color: 'var(--pencil)', fontSize: '11px', marginLeft: 4 }}>{fmtDate(n.updated_at)}</span>
-                      </div>
-
+                    <div className="notecard-right" style={{ justifyContent: 'center' }}>
                       <div className="notecard-actions">
-                        <button className="btn ghost card-btn" onClick={(e) => copyDirectNoteLink(n, e)} title="Copy direct ID permalink for this note">
-                          🔗 Link
-                        </button>
-                        <button className="btn primary card-btn-primary" onClick={() => openNote(n)} title="Open and Edit Note">
-                          ✏️ Edit
-                        </button>
-                        <button className="kebab-btn" title="Options" onClick={(e) => toggleNoteShare(n, e)}>
+                        <button className="kebab-btn" title="Options" onClick={(e) => toggleNoteShare(n, e)} style={{ marginRight: 8 }}>
                           ⋮
+                        </button>
+                        <button className="btn primary card-btn-primary" onClick={() => openNote(n)}>
+                          Open →
                         </button>
                       </div>
                     </div>
@@ -790,17 +809,21 @@ export default function App() {
                   </div>
                   <div className="notelist">
                     {shared.map((n) => (
-                      <div key={n.id} className="notecard" onClick={() => openNote(n)}>
+                      <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
                         <div style={{ flex: 1 }}>
-                          <div className="chaptertag">
-                            {n.chapter || 'Chapter'}
-                            <span className="tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
-                            <span className={`tag perm-${n._perm}`}>{n._perm}</span>
+                          <div className="notecard-tags">
+                            <span className="subject-pill-tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
+                            <span className="stencil-tag shared">SHARED WITH ME</span>
                           </div>
-                          <h3>{n.topic || n.title || 'Untitled topic'}</h3>
+                          <h3 className="notecard-title" style={{ marginTop: 8 }}>{n.topic || n.title || 'Untitled topic'}</h3>
+                          <div className="notecard-meta-line" style={{ marginTop: 4 }}>
+                            {subjectById(n.subject_id)?.name} • Updated {fmtDate(n.updated_at)}
+                          </div>
                         </div>
-                        <div className="cardright">
-                          <span className="meta">{fmtDate(n.updated_at)}</span>
+                        <div className="notecard-right" style={{ justifyContent: 'center' }}>
+                          <button className="btn primary card-btn-primary" onClick={() => openNote(n)}>
+                            Open →
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -837,6 +860,12 @@ export default function App() {
               <p>Create a new note page for {subj.name}. Topic name is optional.</p>
             </div>
             <div className="sheetbody">
+              <div className="fieldrow">
+                <label>Subject</label>
+                <select className="field" value={newSubject} onChange={(e) => setNewSubject(e.target.value)}>
+                  {SUBJECTS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
               <div className="fieldrow">
                 <label htmlFor="new-chapter-input">Chapter name</label>
                 <input

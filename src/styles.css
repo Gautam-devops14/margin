@@ -608,26 +608,23 @@ h1, h2, h3, h4 {
   cursor: pointer;
 }
 
-/* Redesigned Note Cards (.notecard-v2) */
+/* Redesigned Note Cards (.notecard-v2) Phase 3 */
 .notecard-v2 {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
   background: #ffffff;
-  border: 1px solid rgba(27, 42, 65, 0.1);
-  border-left: 4px solid var(--margin);
+  border: 1px solid rgba(0, 0, 0, 0.06);
   border-radius: 8px;
-  padding: 16px 18px;
+  padding: 20px;
   margin-bottom: 12px;
-  box-shadow: 0 1px 3px rgba(27, 42, 65, 0.03);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: box-shadow 0.15s ease;
   cursor: pointer;
 }
 
 .notecard-v2:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(27, 42, 65, 0.06);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
 }
 
 .notecard-tags {
