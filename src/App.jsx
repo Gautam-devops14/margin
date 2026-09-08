@@ -1,905 +1,158 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { SUBJECTS, subjectById } from './lib/subjects';
-import Auth from './components/Auth';
-import Editor from './components/Editor';
-import Revisions from './components/Revisions';
-import Groups from './components/Groups';
-import DashboardSummary from './components/DashboardSummary';
 
-function fmtDate(ts) {
-  if (!ts) return '';
-  return new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+// App shell
+import DesktopNav from './components/app/DesktopNav';
+import MobileNav from './components/app/MobileNav';
+import TopBar from './components/app/TopBar';
+
+// Auth
+import Login from './components/auth/Login';
+
+// Student
+import NotesHome from './components/notes/NotesHome';
+import NoteReader from './components/notes/NoteReader';
+import Activity from './components/activity/Activity';
+import Profile from './components/profile/Profile';
+
+// CR
+import ManageNotes from './components/admin/ManageNotes';
+import CreateEditNote from './components/admin/CreateEditNote';
+
+function getViewFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    view: params.get('view') || 'notes',
+    noteId: params.get('id') || null
+  };
 }
 
 export default function App() {
   const [session, setSession] = useState(null);
-  const [ready, setReady] = useState(false);
-  const [view, setView] = useState('home');
-  const [appSection, setAppSection] = useState('notes');
-  const [subject, setSubject] = useState('all');
-  const [notes, setNotes] = useState([]);
-  const [shared, setShared] = useState([]);
-  const [friends, setFriends] = useState([]);
-  const [friendEmail, setFriendEmail] = useState('');
-  const [current, setCurrent] = useState(null);
-  const [joinCode, setJoinCode] = useState('');
-  const [msg, setMsg] = useState('');
+  const [user, setUser] = useState(null); // { ...supabase user, profile: { name, role } }
+  const [loading, setLoading] = useState(true);
+  const [view, setView] = useState('notes');
+  const [activeNoteRef, setActiveNoteRef] = useState(null);
 
-  // Admin states
-  const [adminMode, setAdminMode] = useState('notebook'); // 'notebook' | 'console'
-  const [adminConsoleTab, setAdminConsoleTab] = useState('notes'); // 'notes' | 'activity'
-  const [adminSearch, setAdminSearch] = useState('');
-  const [adminSubject, setAdminSubject] = useState('all');
-  const [sortBy, setSortBy] = useState('recent'); // 'recent' | 'title' | 'oldest'
-  const [activityLogs, setActivityLogs] = useState([]);
-  const [activityFilter, setActivityFilter] = useState('all');
-
-  const [showNew, setShowNew] = useState(false);
-  const [newChapter, setNewChapter] = useState('');
-  const [newTopic, setNewTopic] = useState('');
-
-  // Persistent Auth Session setup & Cmd+K listener
+  // Bootstrap auth
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setReady(true);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
+    supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (s) bootstrapUser(s);
+      else setLoading(false);
     });
 
-    const handleKbd = (e) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
-        const input = document.getElementById('admin-search-input');
-        if (input) {
-          e.preventDefault();
-          input.focus();
-        }
-      }
-    };
-    window.addEventListener('keydown', handleKbd);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+      if (s) bootstrapUser(s);
+      else { setUser(null); setSession(null); setLoading(false); }
+    });
 
-    return () => {
-      sub.subscription.unsubscribe();
-      window.removeEventListener('keydown', handleKbd);
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
-  const userEmail = (session?.user?.email || '').toLowerCase();
-  const isAdmin = userEmail === 'gmkicoding159@gmail.com' ||
-                  userEmail.includes('gmkicoding') ||
-                  userEmail.includes('phone_9999999999') ||
-                  userEmail.includes('phone_1234567890');
+  async function bootstrapUser(s) {
+    setSession(s);
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('id, name, role')
+      .eq('id', s.user.id)
+      .maybeSingle();
 
-  const logActivity = useCallback(async (action, details) => {
-    if (!session?.user) return;
-    const rawEmail = session.user.email || '';
-    const phone = rawEmail.includes('phone_') ? rawEmail.replace('phone_', '').replace('@margin.app', '') : rawEmail;
+    const fullUser = { ...s.user, profile: profile || { id: s.user.id, name: '', role: 'student' } };
+    setUser(fullUser);
+    setLoading(false);
 
-    const newEntry = {
-      id: Date.now().toString(),
-      user_identity: phone || 'Student User',
-      action,
-      details,
-      created_at: new Date().toISOString()
-    };
-
-    setActivityLogs((prev) => [newEntry, ...prev].slice(0, 100));
-    try {
-      const localLogs = JSON.parse(localStorage.getItem('margin_admin_activity_logs') || '[]');
-      localStorage.setItem('margin_admin_activity_logs', JSON.stringify([newEntry, ...localLogs].slice(0, 100)));
-    } catch { /* ignore */ }
-
-    await supabase.from('admin_activity_logs').insert({
-      user_id: session.user.id,
-      user_identity: phone || 'Student User',
-      action,
-      details,
-      created_at: new Date().toISOString()
-    }).then(() => {}).catch(() => {});
-  }, [session]);
-
-  const loadAdminLogs = useCallback(async () => {
-    if (!session || !isAdmin) return;
-    const { data, error } = await supabase
-      .from('admin_activity_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(100);
-
-    if (!error && data && data.length > 0) {
-      setActivityLogs(data);
-    } else {
-      try {
-        const localLogs = JSON.parse(localStorage.getItem('margin_admin_activity_logs') || '[]');
-        setActivityLogs(localLogs);
-      } catch {
-        setActivityLogs([]);
-      }
-    }
-  }, [session, isAdmin]);
-
-  const loadNotes = useCallback(async () => {
-    if (!session) return;
-    if (isAdmin) {
-      // Admin reads all notes in system with full access
-      const { data, error } = await supabase
-        .from('notes')
-        .select('*')
-        .order('updated_at', { ascending: false });
-      if (error) {
-        const { data: ownData } = await supabase.from('notes').select('*').eq('user_id', session.user.id).order('updated_at', { ascending: false });
-        setNotes(ownData || []);
-      } else {
-        setNotes(data || []);
-      }
-    } else {
-      // Student reads their own notes
-      const { data, error } = await supabase
-        .from('notes')
-        .select('*')
-        .eq('user_id', session.user.id)
-        .order('updated_at', { ascending: false });
-      if (error) toast(error.message);
-      setNotes(data || []);
-    }
-  }, [session, isAdmin]);
-
-  const loadFriends = useCallback(async () => {
-    if (!session) return;
-    const { data } = await supabase
-      .from('friends')
-      .select('*')
-      .eq('user_id', session.user.id);
-    setFriends(data || []);
-  }, [session]);
-
-  const loadShared = useCallback(async () => {
-    if (!session) return;
-
-    // 1. Direct shared access via share code
-    const { data: codeData } = await supabase
-      .from('shared_access').select('permission, note:notes(*)')
-      .eq('user_id', session.user.id);
-
-    // 2. Notes shared by friends (where share_with_friends is true)
-    const { data: friendData } = await supabase
-      .from('notes').select('*')
-      .eq('share_with_friends', true)
-      .neq('user_id', session.user.id);
-
-    const fromCode = (codeData || []).map((r) => ({ ...r.note, _perm: r.permission })).filter((n) => n && n.id);
-    const fromFriends = (friendData || []).map((n) => ({ ...n, _perm: 'view' })).filter((n) => n && n.id);
-
-    // Merge shared notes without duplicate IDs
-    const map = new Map();
-    [...fromCode, ...fromFriends].forEach((n) => map.set(n.id, n));
-    setShared(Array.from(map.values()));
-  }, [session]);
-
-  // Restore subject & note from URL query or localStorage on mount/session
-  useEffect(() => {
-    if (session) {
-      loadNotes();
-      loadShared();
-      loadFriends();
-
-      const params = new URLSearchParams(window.location.search);
-      let noteId = params.get('note');
-      let subjId = params.get('subject');
-
-      if (!subjId) {
-        subjId = localStorage.getItem('margin_last_subject') || SUBJECTS[0].id;
-      }
-      if (!noteId) {
-        noteId = localStorage.getItem('margin_last_note');
-      }
-
-      if (subjId && SUBJECTS.some((s) => s.id === subjId)) {
-        setSubject(subjId);
-      }
-
-      if (noteId) {
-        supabase.from('notes').select('*').eq('id', noteId).maybeSingle().then(({ data }) => {
-          if (data) {
-            setSubject(data.subject_id);
-            setCurrent({ ...data, _perm: data.user_id === session.user.id || isAdmin ? 'edit' : 'view' });
-            setView('editor');
-            window.history.replaceState(null, '', `/?subject=${data.subject_id}&note=${data.id}`);
-          } else {
-            localStorage.removeItem('margin_last_note');
-            window.history.replaceState(null, '', `/?subject=${subjId}`);
-          }
-        });
-      } else if (subjId) {
-        window.history.replaceState(null, '', `/?subject=${subjId}`);
-      }
-    }
-  }, [session, loadNotes, loadShared, loadFriends, isAdmin]);
-
-  function selectSubject(subjId) {
-    setSubject(subjId);
-    localStorage.setItem('margin_last_subject', subjId);
-    window.history.replaceState(null, '', `/?subject=${subjId}`);
-  }
-
-  function toast(m) { setMsg(m); setTimeout(() => setMsg(''), 3200); }
-
-  const [newSubject, setNewSubject] = useState(SUBJECTS[0].id);
-
-  function openNewModal() { 
-    setNewChapter(''); 
-    setNewTopic(''); 
-    setNewSubject(subject === 'all' ? SUBJECTS[0].id : subject);
-    setShowNew(true); 
-  }
-
-  async function createNote() {
-    const ch = newChapter.trim() || 'General Notes';
-    const tp = newTopic.trim();
-    const noteTitle = tp || ch;
-
-    const { data, error } = await supabase
-      .from('notes')
-      .insert({
-        user_id: session.user.id,
-        subject_id: newSubject,
-        chapter: ch,
-        topic: tp,
-        title: noteTitle,
-        content: '',
-        share_with_friends: false
-      })
-      .select().single();
-    if (error) { toast(error.message || 'Could not create note'); return; }
-    setShowNew(false);
-    logActivity('CREATE_NOTE', `Created note "${noteTitle}" in ${subject.toUpperCase()}`);
-    localStorage.setItem('margin_last_subject', subject);
-    localStorage.setItem('margin_last_note', data.id);
-    window.history.replaceState(null, '', `/?subject=${subject}&note=${data.id}`);
-    setCurrent({ ...data, _perm: 'edit' }); setView('editor');
-  }
-
-  function openNote(n) {
-    setSubject(n.subject_id);
-    logActivity('OPEN_NOTE', `Opened note "${n.topic || n.title || 'Note'}" (${n.subject_id.toUpperCase()})`);
-    localStorage.setItem('margin_last_subject', n.subject_id);
-    localStorage.setItem('margin_last_note', n.id);
-    window.history.replaceState(null, '', `/?subject=${n.subject_id}&note=${n.id}`);
-    setCurrent({ ...n, _perm: n.user_id === session.user.id || isAdmin ? 'edit' : (n._perm || 'view') });
-    setView('editor');
-  }
-
-  function copyDirectNoteLink(n, e) {
-    if (e) e.stopPropagation();
-    const link = `${window.location.origin}/?subject=${n.subject_id}&note=${n.id}`;
-    navigator.clipboard.writeText(link).then(() => {
-      toast('Copied direct note permalink to clipboard!');
-    }).catch(() => {
-      toast('Could not copy link');
-    });
-  }
-
-  async function backFromEditor() {
-    setView('home'); setCurrent(null);
-    localStorage.removeItem('margin_last_note');
-    window.history.replaceState(null, '', `/?subject=${subject}`);
-    await loadNotes(); await loadShared(); await loadFriends();
-  }
-
-  async function toggleNoteShare(n, e) {
-    if (e) e.stopPropagation();
-    const nextVal = !n.share_with_friends;
-
-    // Optimistic UI update in notes state
-    setNotes((prev) =>
-      prev.map((item) => (item.id === n.id ? { ...item, share_with_friends: nextVal } : item))
-    );
-
-    const { error } = await supabase
-      .from('notes')
-      .update({ share_with_friends: nextVal, updated_at: new Date().toISOString() })
-      .eq('id', n.id);
-
-    if (error) {
-      toast(error.message || 'Could not update share setting');
-      loadNotes();
-    } else {
-      toast(nextVal ? '🤝 Note is now shared with friends!' : '🔒 Note is now private');
-      logActivity('SHARE_TOGGLE', `Toggled ${nextVal ? 'Shared' : 'Private'} for note "${n.topic || n.title || 'Note'}"`);
+    // Restore deep link
+    const { view: v, noteId } = getViewFromURL();
+    if (v === 'reader' && noteId) {
+      navigate('reader', { id: noteId });
+    } else if (['notes', 'manage', 'activity', 'profile'].includes(v)) {
+      setView(v);
     }
   }
 
-  async function deleteNote(n, e) {
-    e.stopPropagation();
-    if (!confirm('Delete this note?')) return;
-    await supabase.from('notes').delete().eq('id', n.id);
-    loadNotes();
+  function navigate(newView, noteRef = null) {
+    setView(newView);
+    setActiveNoteRef(noteRef);
+    const params = new URLSearchParams();
+    params.set('view', newView);
+    if (noteRef?.id) params.set('id', noteRef.id);
+    window.history.pushState(null, '', `/?${params.toString()}`);
   }
 
-  async function addFriend() {
-    const raw = friendEmail.trim();
-    if (!raw) { toast('Enter classmate phone number'); return; }
-    
-    let target = raw.toLowerCase();
-    if (!target.includes('@')) {
-      const digits = target.replace(/\D/g, '');
-      if (digits.length < 5) { toast('Enter a valid phone number'); return; }
-      target = `phone_${digits}@margin.app`;
-    }
-
-    if (target === session?.user?.email?.toLowerCase()) { toast('You cannot add yourself'); return; }
-
-    const { error } = await supabase
-      .from('friends')
-      .upsert({ user_id: session.user.id, friend_email: target, status: 'accepted' });
-
-    if (error) { toast(error.message || 'Could not add friend'); return; }
-    setFriendEmail('');
-    toast(`Added ${raw} to your friends!`);
-    loadFriends();
-  }
-
-  function formatFriendDisplay(emailStr) {
-    if (!emailStr) return '';
-    if (emailStr.startsWith('phone_') && emailStr.endsWith('@margin.app')) {
-      return emailStr.replace('phone_', '').replace('@margin.app', '');
-    }
-    return emailStr;
-  }
-
-  async function removeFriend(fId) {
-    await supabase.from('friends').delete().eq('id', fId);
-    loadFriends();
-  }
-
-  async function joinByCode() {
-    const code = joinCode.trim().toUpperCase();
-    if (!code) { toast('Enter a share code'); return; }
-    
-    try {
-      const { data, error } = await supabase.rpc('join_note_by_code', { p_code: code });
-      if (!error && data) {
-        setJoinCode('');
-        toast('Note added to Shared with me!');
-        loadShared();
-        return;
-      }
-      
-      const { data: share, error: shareErr } = await supabase
-        .from('note_shares').select('note_id, permission')
-        .eq('code', code).maybeSingle();
-      if (shareErr || !share) throw new Error(shareErr?.message || 'No note found for that code');
-      
-      const { error: accessErr } = await supabase
-        .from('shared_access')
-        .upsert({ note_id: share.note_id, user_id: session.user.id, permission: share.permission });
-      if (accessErr) throw accessErr;
-      
-      setJoinCode('');
-      toast('Note added to Shared with me!');
-      loadShared();
-    } catch (err) {
-      toast(err.message || 'Could not join note');
-    }
-  }
-
-  if (!ready) return null;
-  if (!session) return <Auth />;
-
-  if (view === 'editor' && current) {
+  if (loading) {
     return (
-      <Editor
-        note={current}
-        subject={subjectById(current.subject_id)}
-        me={session.user.id}
-        isAdmin={isAdmin}
-        onBack={backFromEditor}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-app)' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 32, color: 'var(--red)' }}>Margin</div>
+      </div>
     );
   }
 
-  // Filtered notes for Admin System Console
-  const filteredAdminNotes = notes.filter((n) => {
-    const matchesSub = adminSubject === 'all' || n.subject_id === adminSubject;
-    const q = adminSearch.trim().toLowerCase();
-    const matchesQuery = !q ||
-      (n.chapter || '').toLowerCase().includes(q) ||
-      (n.topic || '').toLowerCase().includes(q) ||
-      (n.title || '').toLowerCase().includes(q) ||
-      (n.content || '').toLowerCase().includes(q);
-    return matchesSub && matchesQuery;
-  });
+  if (!user || !session) {
+    return <Login onLogin={(supabaseUser) => bootstrapUser({ user: supabaseUser })} />;
+  }
 
-  const q = adminSearch.trim().toLowerCase();
-  const mine = notes.filter((n) => {
-    const matchesSub = subject === 'all' || n.subject_id === subject;
-    const matchesQuery = !q ||
-      (n.chapter || '').toLowerCase().includes(q) ||
-      (n.topic || '').toLowerCase().includes(q) ||
-      (n.title || '').toLowerCase().includes(q) ||
-      (n.content || '').toLowerCase().includes(q);
-    return matchesSub && matchesQuery;
-  });
-  const subj = subject === 'all' ? { id: 'all', name: 'Recent Notes', code: 'All' } : (subjectById(subject) || SUBJECTS[0]);
+  // If profile has no name, first-time user stuck — Login handles this, but safety fallback:
+  if (!user.profile?.name) {
+    return <Login onLogin={(supabaseUser) => bootstrapUser({ user: supabaseUser })} />;
+  }
+
+  const isCR = user.profile?.role === 'cr';
 
   return (
     <div className="app-shell">
-      {/* Mobile Top Bar */}
-      <div className="mobile-top-bar d-md-none">
-        <div className="app-brand" style={{marginBottom: 0, padding: 0}}>Margin<mark>*</mark></div>
-        <button className="btn ghost" style={{ fontSize: '12px' }} onClick={() => supabase.auth.signOut()}>Sign out</button>
+      <DesktopNav role={user.profile?.role} currentView={view} setView={navigate} />
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <TopBar userName={user.profile?.name || 'Student'} />
+
+        <main className="app-main">
+          {view === 'notes' && (
+            <NotesHome
+              user={user}
+              openNote={(n) => navigate('reader', n)}
+            />
+          )}
+
+          {view === 'reader' && (
+            <NoteReader
+              noteRef={activeNoteRef}
+              user={user}
+              onBack={() => navigate('notes')}
+            />
+          )}
+
+          {view === 'manage' && isCR && (
+            <ManageNotes
+              user={user}
+              onEdit={(n) => navigate('edit', n)}
+              onCreate={() => navigate('edit', null)}
+            />
+          )}
+
+          {view === 'edit' && isCR && (
+            <CreateEditNote
+              note={activeNoteRef}
+              user={user}
+              onBack={() => navigate('manage')}
+              onSaved={() => navigate('manage')}
+            />
+          )}
+
+          {view === 'activity' && <Activity user={user} />}
+
+          {view === 'profile' && (
+            <Profile
+              user={user}
+              onLogout={() => { setUser(null); setSession(null); window.history.pushState(null, '', '/'); }}
+            />
+          )}
+
+          {/* Redirect non-CR users away from manage */}
+          {view === 'manage' && !isCR && <NotesHome user={user} openNote={(n) => navigate('reader', n)} />}
+        </main>
+
+        <MobileNav role={user.profile?.role} currentView={view} setView={navigate} />
       </div>
-
-      {/* Desktop Sidebar */}
-      <nav className="app-nav">
-        <div className="app-brand">Margin<mark>*</mark></div>
-        
-        <div className="nav-links">
-          <button className={`nav-btn ${appSection === 'notes' ? 'active' : ''}`} onClick={() => setAppSection('notes')}>
-            <span style={{ fontSize: '18px' }}>📒</span> Notes
-          </button>
-          <button className={`nav-btn ${appSection === 'revisions' ? 'active' : ''}`} onClick={() => setAppSection('revisions')}>
-            <span style={{ fontSize: '18px' }}>🔔</span> Revisions
-          </button>
-          <button className={`nav-btn ${appSection === 'groups' ? 'active' : ''}`} onClick={() => setAppSection('groups')}>
-            <span style={{ fontSize: '18px' }}>👥</span> Groups
-          </button>
-        </div>
-
-        <div style={{ flex: 1 }} />
-        
-        {isAdmin && (
-          <button 
-            className="nav-btn" 
-            onClick={() => setAdminMode(adminMode === 'notebook' ? 'console' : 'notebook')}
-            style={{ background: adminMode === 'console' ? 'var(--highlighter)' : 'transparent', marginBottom: 8 }}
-          >
-            👑 {adminMode === 'notebook' ? 'Admin Console' : 'Notebook Mode'}
-          </button>
-        )}
-        
-        <div style={{ fontSize: '11px', color: 'var(--pencil)', padding: '0 12px', wordBreak: 'break-all' }}>
-          {userEmail}
-        </div>
-        <button className="nav-btn" onClick={() => supabase.auth.signOut()} style={{ marginTop: 8 }}>
-          Sign out
-        </button>
-      </nav>
-
-      <main className="app-main">
-        {isAdmin && adminMode === 'console' ? (
-          /* ================================================= ADMIN SYSTEM CONSOLE ================================================= */
-          <div className="sheetbody">
-            {/* KPI Stat Cards Banner (Image 2) */}
-            <div className="admin-banner-card">
-              <div className="admin-banner-header">
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span className="admin-crown-icon">👑</span>
-                    <h3 style={{ margin: 0, fontSize: '18px' }}>Admin Console</h3>
-                  </div>
-                  <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--pencil)' }}>
-                    Full access • Notes management & system monitoring
-                  </p>
-                </div>
-                <button className="btn ghost" style={{ background: '#fff', border: '1px solid var(--ink)', fontWeight: 600 }} onClick={() => setAdminMode('notebook')}>
-                  📖 Notebook Mode
-                </button>
-              </div>
-
-              <div className="stat-cards-grid">
-                <div className="stat-card">
-                  <div className="stat-icon red">📄</div>
-                  <div>
-                    <div className="stat-number">{notes.length}</div>
-                    <div className="stat-label">Total Notes</div>
-                  </div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-icon green">👥</div>
-                  <div>
-                    <div className="stat-number">{notes.filter(n => n.share_with_friends).length}</div>
-                    <div className="stat-label">Shared Notes</div>
-                  </div>
-                </div>
-
-                <div className="stat-card">
-                  <div className="stat-icon gold">🔒</div>
-                  <div>
-                    <div className="stat-number">{notes.filter(n => !n.share_with_friends).length}</div>
-                    <div className="stat-label">Private Notes</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Admin Console Sub-Tabs */}
-            <div style={{ display: 'flex', gap: 10, margin: '20px 0 10px', borderBottom: '1px solid var(--paper-line)', paddingBottom: 10 }}>
-              <button
-                className="btn ghost"
-                style={{ background: adminConsoleTab === 'notes' ? 'var(--highlighter)' : 'transparent', fontWeight: 600 }}
-                onClick={() => setAdminConsoleTab('notes')}
-              >
-                📝 All Notes Directory ({notes.length})
-              </button>
-              <button
-                className="btn ghost"
-                style={{ background: adminConsoleTab === 'activity' ? 'var(--highlighter)' : 'transparent', fontWeight: 600 }}
-                onClick={() => { setAdminConsoleTab('activity'); loadAdminLogs(); }}
-              >
-                📜 Live System Activity Feed ({activityLogs.length})
-              </button>
-            </div>
-
-            {adminConsoleTab === 'activity' ? (
-              <div style={{ marginTop: 16 }}>
-                <div className="listhead">
-                  <h2>📜 Live System Activity Feed</h2>
-                  <button className="btn ghost" style={{ fontSize: '11px', padding: '4px 8px' }} onClick={loadAdminLogs}>
-                    🔄 Refresh Activity Logs
-                  </button>
-                </div>
-
-                {activityLogs.length === 0 ? (
-                  <div className="empty">No system activity logged yet. Activity logs capture sign-ins, note creations, share code joins, and edits in real-time.</div>
-                ) : (
-                  <div style={{ overflowX: 'auto', marginTop: 12 }}>
-                    <table className="ruled-table" style={{ width: '100%', fontSize: '12px' }}>
-                      <thead>
-                        <tr>
-                          <th>Timestamp</th>
-                          <th>User / Phone Number</th>
-                          <th>Action Tag</th>
-                          <th>Activity Details</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {activityLogs.map((log, idx) => (
-                          <tr key={log.id || idx}>
-                            <td style={{ whiteSpace: 'nowrap' }}>{new Date(log.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })}</td>
-                            <td><strong>{log.user_identity || 'Student User'}</strong></td>
-                            <td><span className="tag perm-edit">{log.action || 'ACTIVITY'}</span></td>
-                            <td>{log.details || 'Performed system activity'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            ) : (
-              <>
-                {/* Search Bar with ⌘ K Badge */}
-                <div style={{ marginTop: 16 }}>
-                  <div className="search-wrapper">
-                    <span className="search-icon-left">🔍</span>
-                    <input
-                      id="admin-search-input"
-                      name="adminSearch"
-                      className="search-input-field"
-                      placeholder="Search notes, chapters, topics…"
-                      value={adminSearch}
-                      onChange={(e) => setAdminSearch(e.target.value)}
-                    />
-                    <span className="kbd-badge">⌘ K</span>
-                  </div>
-                </div>
-
-                {/* Subject Filter Pills & Sort Dropdown */}
-                <div className="filter-pills-row">
-                  <div className="pill-tabs">
-                    <button
-                      className={`pill-btn ${adminSubject === 'all' ? 'active' : ''}`}
-                      onClick={() => setAdminSubject('all')}
-                    >
-                      All <span className="pill-count">{notes.length}</span>
-                    </button>
-                    {SUBJECTS.map((s) => {
-                      const count = notes.filter(n => n.subject_id === s.id).length;
-                      return (
-                        <button
-                          key={s.id}
-                          className={`pill-btn ${adminSubject === s.id ? 'active' : ''}`}
-                          onClick={() => setAdminSubject(s.id)}
-                        >
-                          {s.code} <span className="pill-count">{count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <select className="sort-select" value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                    <option value="recent">Sort: Recently Updated</option>
-                    <option value="title">Sort: Title A-Z</option>
-                    <option value="oldest">Sort: Oldest</option>
-                  </select>
-                </div>
-
-                <div className="listhead" style={{ marginTop: 18 }}>
-                  <h2>All Notes ({filteredAdminNotes.length})</h2>
-                  <span className="count">Full Admin Access</span>
-                </div>
-
-                <div className="notelist">
-                  {filteredAdminNotes.length === 0 && (
-                    <div className="empty">No notes match your search/filter criteria.</div>
-                  )}
-                  {filteredAdminNotes.map((n) => (
-                    <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
-                      <div style={{ flex: 1 }}>
-                        <div className="notecard-tags">
-                          <span className="subject-pill-tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
-                          {n.share_with_friends ? (
-                            <span className="stencil-tag shared">SHARED WITH FRIENDS</span>
-                          ) : (
-                            <span className="stencil-tag private">PRIVATE</span>
-                          )}
-                        </div>
-
-                        <h3 className="notecard-title">{n.topic || n.title || 'Untitled topic'}</h3>
-                        <div className="notecard-subtitle">{subjectById(n.subject_id)?.name || 'Course Subject'}</div>
-                        <div className="notecard-meta-line">
-                          {n.chapter ? `Chapter ${n.chapter}` : 'General Notes'} {n.topic ? `• ${n.topic}` : ''}
-                        </div>
-                      </div>
-
-                      <div className="notecard-right">
-                        <div className="share-status-indicator">
-                          <span className={`status-dot ${n.share_with_friends ? 'green' : 'gray'}`}></span>
-                          <span>{n.share_with_friends ? 'Shared' : 'Private'}</span>
-                          <span style={{ color: 'var(--pencil)', fontSize: '11px', marginLeft: 4 }}>{fmtDate(n.updated_at)}</span>
-                        </div>
-
-                        <div className="notecard-actions">
-                          <button className="btn ghost card-btn" onClick={(e) => copyNoteText(n, e)} title="Copy note text to clipboard">
-                            📋 Copy
-                          </button>
-                          <button className="btn primary card-btn-primary" onClick={() => openNote(n)} title="Open and Edit Note">
-                            ✏️ Edit
-                          </button>
-                          <button className="kebab-btn" title="Toggle Sharing" onClick={(e) => toggleNoteShare(n, e)}>
-                            ⋮
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        ) : (
-          /* ================================================= NOTEBOOK VIEW (STUDENT & ADMIN CREATOR) ================================================= */
-          <>
-            {appSection === 'revisions' ? (
-              <Revisions session={session} openNote={openNote} toast={toast} />
-            ) : appSection === 'groups' ? (
-              <Groups session={session} openNote={openNote} toast={toast} />
-            ) : (
-            <div>
-              {/* Desktop specific top header for Notes */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
-                <h1 style={{ fontFamily: 'var(--font-display)', margin: 0, fontSize: '32px', color: 'var(--ink)' }}>Notes</h1>
-                <button className="btn primary" onClick={openNewModal}>+ New Note</button>
-              </div>
-
-              <DashboardSummary session={session} setAppSection={setAppSection} />
-
-              <div className="filter-pills-row" style={{ padding: '0 0 16px 0', borderBottom: '1px solid rgba(0,0,0,0.06)', marginBottom: '24px' }}>
-                <div className="pill-tabs" style={{ flex: 1 }}>
-                  <button className={`pill-btn ${subject === 'all' ? 'active' : ''}`} onClick={() => selectSubject('all')}>All</button>
-                  {SUBJECTS.map((s) => (
-                    <button
-                      key={s.id}
-                      className={`pill-btn ${subject === s.id ? 'active' : ''}`}
-                      onClick={() => selectSubject(s.id)}
-                    >
-                      {s.code}
-                    </button>
-                  ))}
-                </div>
-                <div className="search-wrapper" style={{ flex: 1, maxWidth: 300 }}>
-                  <span className="search-icon-left">🔍</span>
-                  <input
-                    className="search-input-field"
-                    placeholder="Search notes..."
-                    value={adminSearch}
-                    onChange={(e) => setAdminSearch(e.target.value)}
-                  />
-                </div>
-              </div>
-              <div className="joinrow">
-                <div style={{ flex: 1 }}>
-                  <label htmlFor="join-code-input" className="joinlabel">Enter friend's share code</label>
-                  <input
-                    id="join-code-input"
-                    name="joinCode"
-                    className="field code-input"
-                    placeholder="e.g. X7K9P2"
-                    value={joinCode}
-                    onChange={(e) => setJoinCode(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && joinByCode()}
-                  />
-                </div>
-                <button className="btn ghost" onClick={joinByCode}>Join note</button>
-              </div>
-
-              <div className="listhead" style={{ marginBottom: 16 }}>
-                <h2 style={{ fontSize: '20px' }}>{subj.name}</h2>
-                <span className="count">{mine.length} {mine.length === 1 ? 'note' : 'notes'}</span>
-              </div>
-
-              <div className="notelist">
-                {mine.length === 0 && (
-                  <div className="empty">No notes in {subj.name} yet. Click <b>+ New note</b> to begin a chapter.</div>
-                )}
-                {mine.map((n) => (
-                  <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
-                    <div style={{ flex: 1 }}>
-                      <div className="notecard-tags">
-                        <span className="subject-pill-tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
-                        {n.share_with_friends ? (
-                          <span className="stencil-tag shared">SHARED WITH FRIENDS</span>
-                        ) : (
-                          <span className="stencil-tag private">PRIVATE</span>
-                        )}
-                      </div>
-
-                      <h3 className="notecard-title" style={{ marginTop: 8 }}>{n.topic || n.title || 'Untitled topic'}</h3>
-                      <div className="notecard-meta-line" style={{ marginTop: 4 }}>
-                        {subjectById(n.subject_id)?.name} • Updated {fmtDate(n.updated_at)}
-                      </div>
-                    </div>
-
-                    <div className="notecard-right" style={{ justifyContent: 'center' }}>
-                      <div className="notecard-actions">
-                        <button className="kebab-btn" title="Options" onClick={(e) => toggleNoteShare(n, e)} style={{ marginRight: 8 }}>
-                          ⋮
-                        </button>
-                        <button className="btn primary card-btn-primary" onClick={() => openNote(n)}>
-                          Open →
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Friends Section */}
-              <div className="friends-card">
-                <h3>👥 Your Friends List</h3>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                  <div style={{ flex: 1 }}>
-                    <label htmlFor="friend-phone-input" className="joinlabel">Add friend by Phone Number</label>
-                    <input
-                      id="friend-phone-input"
-                      name="friendPhone"
-                      className="field"
-                      placeholder="e.g. 9876543210"
-                      value={friendEmail}
-                      onChange={(e) => setFriendEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && addFriend()}
-                    />
-                  </div>
-                  <button className="btn ghost" onClick={addFriend}>Add Friend</button>
-                </div>
-
-                <div className="friend-list">
-                  {friends.length === 0 ? (
-                    <div style={{ fontSize: '13px', color: 'var(--pencil)', marginTop: 8 }}>No friends added yet. Add friends by phone number to share notes automatically with one toggle!</div>
-                  ) : (
-                    friends.map((f) => (
-                      <span key={f.id} className="friend-chip">
-                        <span>{formatFriendDisplay(f.friend_email)}</span>
-                        <button className="del" style={{ padding: 0 }} onClick={() => removeFriend(f.id)}>✕</button>
-                      </span>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {shared.length > 0 && (
-                <>
-                  <div className="listhead" style={{ marginTop: 36 }}>
-                    <h2>Shared with me</h2>
-                    <span className="count">{shared.length} {shared.length === 1 ? 'note' : 'notes'}</span>
-                  </div>
-                  <div className="notelist">
-                    {shared.map((n) => (
-                      <div key={n.id} className="notecard-v2" onClick={() => openNote(n)}>
-                        <div style={{ flex: 1 }}>
-                          <div className="notecard-tags">
-                            <span className="subject-pill-tag">{subjectById(n.subject_id)?.code || 'NOTE'}</span>
-                            <span className="stencil-tag shared">SHARED WITH ME</span>
-                          </div>
-                          <h3 className="notecard-title" style={{ marginTop: 8 }}>{n.topic || n.title || 'Untitled topic'}</h3>
-                          <div className="notecard-meta-line" style={{ marginTop: 4 }}>
-                            {subjectById(n.subject_id)?.name} • Updated {fmtDate(n.updated_at)}
-                          </div>
-                        </div>
-                        <div className="notecard-right" style={{ justifyContent: 'center' }}>
-                          <button className="btn primary card-btn-primary" onClick={() => openNote(n)}>
-                            Open →
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-            )}
-          </>
-        )}
-      </main>
-
-      {/* Mobile Bottom Navigation */}
-      <nav className="mobile-bottom-nav">
-        <button className={`mobile-nav-btn ${appSection === 'notes' ? 'active' : ''}`} onClick={() => setAppSection('notes')}>
-          <span className="mobile-nav-icon">📒</span>
-          <span>Notes</span>
-        </button>
-        <button className={`mobile-nav-btn ${appSection === 'revisions' ? 'active' : ''}`} onClick={() => setAppSection('revisions')}>
-          <span className="mobile-nav-icon">🔔</span>
-          <span>Revisions</span>
-        </button>
-        <button className={`mobile-nav-btn ${appSection === 'groups' ? 'active' : ''}`} onClick={() => setAppSection('groups')}>
-          <span className="mobile-nav-icon">👥</span>
-          <span>Groups</span>
-        </button>
-      </nav>
-
-      {showNew && (
-        <div className="modal-backdrop" onClick={() => setShowNew(false)}>
-          <div className="sheet modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modalhead">
-              <h3>New Note</h3>
-              <p>Create a new note page for {subj.name}. Topic name is optional.</p>
-            </div>
-            <div className="sheetbody">
-              <div className="fieldrow">
-                <label>Subject</label>
-                <select className="field" value={newSubject} onChange={(e) => setNewSubject(e.target.value)}>
-                  {SUBJECTS.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-              <div className="fieldrow">
-                <label htmlFor="new-chapter-input">Chapter name</label>
-                <input
-                  id="new-chapter-input"
-                  name="chapter"
-                  className="field"
-                  placeholder="e.g. Chapter 3: Combinational Circuits"
-                  autoFocus
-                  value={newChapter}
-                  onChange={(e) => setNewChapter(e.target.value)}
-                />
-              </div>
-              <div className="fieldrow">
-                <label htmlFor="new-topic-input">Topic name (Optional)</label>
-                <input
-                  id="new-topic-input"
-                  name="topic"
-                  className="field"
-                  placeholder="e.g. Multiplexers & Decoders (Optional)"
-                  value={newTopic}
-                  onChange={(e) => setNewTopic(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && createNote()}
-                />
-              </div>
-              <div className="modalactions">
-                <button className="btn ghost" onClick={() => setShowNew(false)}>Cancel</button>
-                <button className="btn primary" onClick={createNote}>Create note</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {msg && <div className="toast">{msg}</div>}
     </div>
   );
 }
