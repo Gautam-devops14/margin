@@ -17,47 +17,52 @@ function Avatar({ name }) {
   );
 }
 
-export default function CommentSection({ noteId, user }) {
+export default function CommentSection({ noteId, user, notePublished }) {
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [newComment, setNewComment] = useState('');
   const [posting, setPosting] = useState(false);
+  const [postError, setPostError] = useState('');
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
+  const isCR = user?.profile?.role === 'cr';
 
   useEffect(() => { loadComments(); }, [noteId]);
 
   async function loadComments() {
     setLoading(true);
-    // Fetch top-level comments and replies together, join profile names
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('comments')
-      .select('id, content, created_at, user_id, parent_comment_id, profiles(name)')
+      .select('id, content, created_at, user_id, parent_comment_id, profiles(name, role)')
       .eq('note_id', noteId)
       .order('created_at', { ascending: true });
 
-    if (data) {
+    if (!error && data) {
       const top = data.filter(c => !c.parent_comment_id);
       const replies = data.filter(c => c.parent_comment_id);
-      const structured = top.map(c => ({
-        ...c,
-        replies: replies.filter(r => r.parent_comment_id === c.id)
-      }));
-      setComments(structured);
+      setComments(top.map(c => ({ ...c, replies: replies.filter(r => r.parent_comment_id === c.id) })));
     }
     setLoading(false);
   }
 
   async function postComment() {
     if (!newComment.trim() || posting) return;
+    // Prevent commenting on unpublished notes (belt & suspenders, RLS handles real enforcement)
+    if (!notePublished && !isCR) { setPostError('You cannot comment on an unpublished note.'); return; }
     setPosting(true);
+    setPostError('');
     const { error } = await supabase.from('comments').insert({
       note_id: noteId,
       user_id: user.id,
       content: newComment.trim(),
       parent_comment_id: null
     });
-    if (!error) { setNewComment(''); loadComments(); }
+    if (error) {
+      setPostError('Comment failed. Please try again.');
+    } else {
+      setNewComment('');
+      loadComments();
+    }
     setPosting(false);
   }
 
@@ -75,15 +80,15 @@ export default function CommentSection({ noteId, user }) {
   }
 
   async function deleteComment(id) {
-    await supabase.from('comments').delete().eq('id', id);
-    loadComments();
+    const { error } = await supabase.from('comments').delete().eq('id', id);
+    if (!error) loadComments();
   }
 
   const totalCount = comments.reduce((acc, c) => acc + 1 + (c.replies?.length || 0), 0);
 
   return (
     <div className="comments-section">
-      <h3 style={{ marginBottom: 24 }}>💬 Comments ({loading ? '...' : totalCount})</h3>
+      <h3 style={{ marginBottom: 24 }}>💬 Comments ({loading ? '…' : totalCount})</h3>
 
       {loading ? (
         <p style={{ color: 'var(--pencil)' }}>Loading comments...</p>
@@ -98,16 +103,21 @@ export default function CommentSection({ noteId, user }) {
               <Avatar name={c.profiles?.name} />
               <div style={{ flex: 1 }}>
                 <div className="comment-header">
-                  <span className="comment-author">{c.profiles?.name || 'Anonymous'}</span>
+                  <span className="comment-author">
+                    {c.profiles?.name || 'Anonymous'}
+                    {c.profiles?.role === 'cr' && <span style={{ marginLeft: 6, fontSize: 11, background: 'var(--red-light)', color: 'var(--red)', padding: '1px 6px', borderRadius: 8, fontWeight: 600 }}>CR</span>}
+                  </span>
                   <span className="comment-time">{timeAgo(c.created_at)}</span>
                 </div>
                 <div className="comment-body">{c.content}</div>
                 <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
-                  <button className="btn ghost" style={{ padding: '2px 0', fontSize: 13 }}
-                    onClick={() => setReplyingTo(replyingTo === c.id ? null : c.id)}>
-                    Reply
-                  </button>
-                  {(user.id === c.user_id || user.profile?.role === 'cr') && (
+                  {notePublished && (
+                    <button className="btn ghost" style={{ padding: '2px 0', fontSize: 13 }}
+                      onClick={() => setReplyingTo(replyingTo === c.id ? null : c.id)}>
+                      Reply
+                    </button>
+                  )}
+                  {(user.id === c.user_id || isCR) && (
                     <button className="btn ghost" style={{ padding: '2px 0', fontSize: 13, color: 'var(--red)' }}
                       onClick={() => deleteComment(c.id)}>
                       Delete
@@ -135,11 +145,14 @@ export default function CommentSection({ noteId, user }) {
                       <Avatar name={r.profiles?.name} />
                       <div style={{ flex: 1 }}>
                         <div className="comment-header">
-                          <span className="comment-author">{r.profiles?.name || 'Anonymous'}</span>
+                          <span className="comment-author">
+                            {r.profiles?.name || 'Anonymous'}
+                            {r.profiles?.role === 'cr' && <span style={{ marginLeft: 6, fontSize: 11, background: 'var(--red-light)', color: 'var(--red)', padding: '1px 6px', borderRadius: 8, fontWeight: 600 }}>CR</span>}
+                          </span>
                           <span className="comment-time">{timeAgo(r.created_at)}</span>
                         </div>
                         <div className="comment-body">{r.content}</div>
-                        {(user.id === r.user_id || user.profile?.role === 'cr') && (
+                        {(user.id === r.user_id || isCR) && (
                           <button className="btn ghost" style={{ padding: '2px 0', fontSize: 12, color: 'var(--red)', marginTop: 4 }}
                             onClick={() => deleteComment(r.id)}>
                             Delete
@@ -155,20 +168,24 @@ export default function CommentSection({ noteId, user }) {
         ))
       )}
 
-      <div className="comment-input-box" style={{ marginTop: 32 }}>
-        <Avatar name={user.profile?.name} />
-        <textarea
-          className="comment-input"
-          rows={2}
-          placeholder="Write a comment..."
-          value={newComment}
-          onChange={e => setNewComment(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); postComment(); } }}
-        />
-        <button className="btn primary" style={{ alignSelf: 'flex-end' }} onClick={postComment} disabled={posting}>
-          {posting ? '...' : 'Post'}
-        </button>
-      </div>
+      {/* Only show comment input on published notes (students), or always for CR */}
+      {(notePublished || isCR) && (
+        <div className="comment-input-box" style={{ marginTop: 32 }}>
+          <Avatar name={user.profile?.name} />
+          <textarea
+            className="comment-input"
+            rows={2}
+            placeholder="Write a comment..."
+            value={newComment}
+            onChange={e => setNewComment(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); postComment(); } }}
+          />
+          <button className="btn primary" style={{ alignSelf: 'flex-end' }} onClick={postComment} disabled={posting}>
+            {posting ? '…' : 'Post'}
+          </button>
+        </div>
+      )}
+      {postError && <p style={{ color: 'var(--red)', fontSize: 13, marginTop: 8 }}>{postError}</p>}
     </div>
   );
 }

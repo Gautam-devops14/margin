@@ -7,9 +7,11 @@ export default function NoteReader({ noteRef, user, onBack }) {
   const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
+  const isCR = user?.profile?.role === 'cr';
 
   useEffect(() => {
     if (noteRef?.id) loadNote(noteRef.id);
+    else setUnavailable(true);
   }, [noteRef?.id]);
 
   async function loadNote(id) {
@@ -21,11 +23,11 @@ export default function NoteReader({ noteRef, user, onBack }) {
       .eq('id', id)
       .maybeSingle();
 
-    if (error || !data || !data.published) {
+    // Students blocked from unpublished notes; CR can preview drafts
+    if (error || !data || (!data.published && !isCR)) {
       setUnavailable(true);
     } else {
       setNote(data);
-      // Record view (non-blocking)
       supabase.rpc('record_note_view', { p_note: id }).catch(() => {});
     }
     setLoading(false);
@@ -62,7 +64,7 @@ export default function NoteReader({ noteRef, user, onBack }) {
 
   const subj = SUBJECTS.find(s => s.id === note.subject_id);
 
-  // Parse content — support plain text, Quill Delta JSON, or raw HTML
+  // Parse content — Quill Delta JSON → plain lines, or plain text
   let contentLines = [];
   try {
     const parsed = JSON.parse(note.content || '{}');
@@ -73,13 +75,18 @@ export default function NoteReader({ noteRef, user, onBack }) {
       contentLines = (note.content || '').split('\n').filter(l => l.trim());
     }
   } catch {
-    // raw HTML or plain text
     contentLines = (note.content || '').split('\n').filter(l => l.trim());
   }
 
   return (
     <div>
       <button className="btn ghost" style={{ padding: '8px 0', color: 'var(--pencil)', marginBottom: 32 }} onClick={onBack}>← Back to Notes</button>
+
+      {isCR && !note.published && (
+        <div style={{ background: '#fef08a', border: '1px solid #ca8a04', color: '#92400e', padding: '10px 16px', borderRadius: 8, marginBottom: 24, fontSize: 14 }}>
+          ⚠️ Draft preview — students cannot see this note yet.
+        </div>
+      )}
 
       <div className="notebook-container">
         <div className="notebook-binding" />
@@ -106,7 +113,7 @@ export default function NoteReader({ noteRef, user, onBack }) {
         </div>
       </div>
 
-      <CommentSection noteId={note.id} user={user} />
+      <CommentSection noteId={note.id} user={user} notePublished={note.published} />
     </div>
   );
 }
