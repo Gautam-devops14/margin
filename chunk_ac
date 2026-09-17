@@ -1,0 +1,166 @@
+ if exists groups_delete on groups;
+create policy groups_select on groups for select using (
+  auth.uid() = created_by or exists (select 1 from group_members gm where gm.group_id = groups.id and gm.user_id = auth.uid())
+);
+create policy groups_insert on groups for insert with check (auth.uid() = created_by);
+create policy groups_update on groups for update using (
+  exists (select 1 from group_members gm where gm.group_id = groups.id and gm.user_id = auth.uid() and gm.role = 'admin')
+);
+create policy groups_delete on groups for delete using (auth.uid() = created_by);
+drop policy if exists group_members_select on group_members;
+drop policy if exists group_members_delete on group_members;
+create policy group_members_select on group_members for select using (
+  exists (select 1 from group_members my_gm where my_gm.group_id = group_members.group_id and my_gm.user_id = auth.uid())
+);
+create policy group_members_delete on group_members for delete using (
+  auth.uid() = user_id or exists (select 1 from group_members my_gm where my_gm.group_id = group_members.group_id and my_gm.user_id = auth.uid() and my_gm.role = 'admin')
+);
+drop policy if exists group_posts_select on group_posts;
+drop policy if exists group_posts_insert on group_posts;
+drop policy if exists group_posts_update on group_posts;
+drop policy if exists group_posts_delete on group_posts;
+create policy group_posts_select on group_posts for select using (
+  exists (select 1 from group_members gm where gm.group_id = group_posts.group_id and gm.user_id = auth.uid())
+);
+create policy group_posts_insert on group_posts for insert with check (
+  auth.uid() = user_id and exists (select 1 from group_members gm where gm.group_id = group_posts.group_id and gm.user_id = auth.uid())
+);
+create policy group_posts_update on group_posts for update using (
+  auth.uid() = user_id or exists (select 1 from group_members gm where gm.group_id = group_posts.group_id and gm.user_id = auth.uid() and gm.role = 'admin')
+);
+create policy group_posts_delete on group_posts for delete using (
+  auth.uid() = user_id or exists (select 1 from group_members gm where gm.group_id = group_posts.group_id and gm.user_id = auth.uid() and gm.role = 'admin')
+);
+drop policy if exists group_replies_select on group_replies;
+drop policy if exists group_replies_insert on group_replies;
+drop policy if exists group_replies_update on group_replies;
+drop policy if exists group_replies_delete on group_replies;
+create policy group_replies_select on group_replies for select using (
+  exists (
+    select 1 from group_posts gp 
+    join group_members gm on gm.group_id = gp.group_id 
+    where gp.id = group_replies.post_id and gm.user_id = auth.uid()
+  )
+);
+create policy group_replies_insert on group_replies for insert with check (
+  auth.uid() = user_id and exists (
+    select 1 from group_posts gp 
+    join group_members gm on gm.group_id = gp.group_id 
+    where gp.id = group_replies.post_id and gm.user_id = auth.uid()
+  )
+);
+create policy group_replies_update on group_replies for update using (
+  auth.uid() = user_id or exists (
+    select 1 from group_posts gp 
+    join group_members gm on gm.group_id = gp.group_id 
+    where gp.id = group_replies.post_id and gm.user_id = auth.uid() and gm.role = 'admin'
+  )
+);
+create policy group_replies_delete on group_replies for delete using (
+  auth.uid() = user_id or exists (
+    select 1 from group_posts gp 
+    join group_members gm on gm.group_id = gp.group_id 
+    where gp.id = group_replies.post_id and gm.user_id = auth.uid() and gm.role = 'admin'
+  )
+);
+create or replace function public.join_group_by_code(p_code text)
+returns table (group_id uuid, role text, name text)
+language plpgsql security definer
+set search_path = public, pg_temp as $$
+declare 
+  g record;
+begin
+  if auth.uid() is null then
+    raise exception 'Sign in first';
+  end if;
+  select id, name, created_by into g from groups where upper(join_code) = upper(btrim(p_code));
+  if not found then
+    raise exception 'No group found for that code';
+  end if;
+  insert into group_members (group_id, user_id, role)
+  values (g.id, auth.uid(), 'member')
+  on conflict (group_id, user_id) do nothing;
+  return query select g.id, 'member'::text, g.name;
+end;
+$$;
+revoke all on function public.join_group_by_code(text) from public;
+grant execute on function public.join_group_by_code(text) to authenticated;
+create or replace function public.mark_revision_complete(p_revision_id uuid)
+returns void
+language plpgsql security definer
+set search_path = public, pg_temp as $$
+begin
+  if auth.uid() is null then return; end if;
+  update revisions
+  set completed_at = now()
+  where id = p_revision_id and user_id = auth.uid();
+end;
+$$;
+revoke all on function public.mark_revision_complete(uuid) from public;
+grant execute on function public.mark_revision_complete(uuid) to authenticated;
+create table if not exists profiles (
+  id          uuid primary key references auth.users on delete cascade,
+  name        text not null default '',
+  role        text not null default 'student' check (role in ('student', 'cr')),
+  created_at  timestamptz default now(),
+  updated_at  timestamptz default now()
+);
+alter table profiles enable row level security;
+drop policy if exists profiles_select_own on profiles;
+drop policy if exists profiles_update_own on profiles;
+drop policy if exists profiles_insert_own on profiles;
+drop policy if exists profiles_cr_select_all on profiles;
+create policy profiles_select_own on profiles
+  for select using (auth.uid() = id);
+create policy profiles_update_own on profiles
+  for update using (auth.uid() = id) with check (
+    auth.uid() = id
+    -- Prevent self-promotion: users cannot change their own role
+    -- (role can only be changed via SQL by a superuser/service role)
+    AND (
+      SELECT role FROM profiles WHERE id = auth.uid()
+    ) = role
+  );
+create policy profiles_insert_own on profiles
+  for insert with check (auth.uid() = id AND role = 'student');
+create policy profiles_cr_select_all on profiles
+  for select using (
+    exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'cr')
+  );
+create or replace function public.is_cr()
+returns boolean language sql stable security definer
+set search_path = public, pg_temp as $$
+  select exists (select 1 from profiles where id = auth.uid() and role = 'cr');
+$$;
+alter table notes add column if not exists published boolean not null default false;
+create index if not exists notes_published_subject_idx on notes (published, subject_id, updated_at desc);
+drop policy if exists notes_owner_all      on notes;
+drop policy if exists notes_shared_read    on notes;
+drop policy if exists notes_shared_edit    on notes;
+drop policy if exists notes_friends_read   on notes;
+drop policy if exists notes_admin_all      on notes;
+drop policy if exists notes_admin_read     on notes;
+create policy notes_cr_all on notes
+  for all using (public.is_cr()) with check (public.is_cr());
+create policy notes_student_read on notes
+  for select using (
+    published = true
+    AND NOT public.is_cr()
+  );
+create table if not exists comments (
+  id                  uuid primary key default gen_random_uuid(),
+  note_id             uuid not null references notes on delete cascade,
+  user_id             uuid not null references auth.users on delete cascade,
+  parent_comment_id   uuid references comments on delete cascade,
+  content             text not null,
+  created_at          timestamptz default now(),
+  updated_at          timestamptz default now()
+);
+create index if not exists comments_note_idx on comments (note_id, created_at asc);
+create index if not exists comments_parent_idx on comments (parent_comment_id);
+alter table comments enable row level security;
+drop policy if exists comments_student_read on comments;
+drop policy if exists comments_student_insert on comments;
+drop policy if exists comments_own_update on comments;
+drop policy if exists comments_own_delete on comments;
+drop policy if exists comments_cr_all o

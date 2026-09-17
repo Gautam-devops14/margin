@@ -118,6 +118,7 @@ export default function App() {
               noteRef={activeNoteRef}
               user={user}
               onBack={() => navigate('notes')}
+              onEdit={() => navigate('edit', activeNoteRef)}
             />
           )}
 

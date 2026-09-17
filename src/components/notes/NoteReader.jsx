@@ -5,7 +5,7 @@ import CommentSection from '../comments/CommentSection';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css'; // Or bubble
 
-export default function NoteReader({ noteRef, user, onBack }) {
+export default function NoteReader({ noteRef, user, onBack, onEdit }) {
   const [note, setNote] = useState(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState(false);
@@ -94,7 +94,18 @@ export default function NoteReader({ noteRef, user, onBack }) {
               <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--pencil)', textTransform: 'uppercase', letterSpacing: 1 }}>
                 {subj?.name || note.subject_id}
               </span>
-              <span className="badge draft">🔒 Read Only</span>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                {isCR && onEdit && (
+                  <button 
+                    className="btn ghost" 
+                    style={{ padding: '4px 12px', fontSize: 13 }}
+                    onClick={() => onEdit(note)}
+                  >
+                    ✏️ Edit Note
+                  </button>
+                )}
+                <span className="badge draft">🔒 Read Only</span>
+              </div>
             </div>
 
             <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, marginBottom: 4, borderBottom: '2px solid var(--ink)', display: 'inline-block', paddingBottom: 4 }}>

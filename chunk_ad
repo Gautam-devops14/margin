@@ -1,0 +1,53 @@
+n comments;
+create policy comments_student_read on comments
+  for select using (
+    exists (
+      select 1 from notes n
+      where n.id = comments.note_id and n.published = true
+    )
+  );
+create policy comments_student_insert on comments
+  for insert with check (
+    auth.uid() = user_id
+    AND exists (
+      select 1 from notes n
+      where n.id = note_id and n.published = true
+    )
+  );
+create policy comments_own_update on comments
+  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy comments_own_delete on comments
+  for delete using (
+    auth.uid() = user_id OR public.is_cr()
+  );
+create policy comments_cr_all on comments
+  for all using (public.is_cr()) with check (public.is_cr());
+create or replace function public.publish_note(p_note_id uuid, p_publish boolean)
+returns void language plpgsql security definer
+set search_path = public, pg_temp as $$
+begin
+  if not public.is_cr() then
+    raise exception 'Only a CR can publish or unpublish notes';
+  end if;
+  update notes
+  set published = p_publish, updated_at = now()
+  where id = p_note_id;
+end;
+$$;
+revoke all on function public.publish_note(uuid, boolean) from public;
+grant execute on function public.publish_note(uuid, boolean) to authenticated;
+DROP POLICY IF EXISTS profiles_update_own ON profiles;
+CREATE POLICY profiles_update_own ON profiles
+  FOR UPDATE
+  USING (auth.uid() = id)
+  WITH CHECK (
+    auth.uid() = id
+    AND role = (SELECT role FROM profiles WHERE id = auth.uid())
+  );
+DROP POLICY IF EXISTS profiles_insert_own ON profiles;
+CREATE POLICY profiles_insert_own ON profiles
+  FOR INSERT
+  WITH CHECK (
+    auth.uid() = id
+    AND role = 'student'
+  );

@@ -1,0 +1,177 @@
+XYZ',
+                                   1 + floor(random()*32)::int, 1), '')
+          from generate_series(1,6));
+    begin
+      insert into note_shares (note_id, code, permission, created_by)
+      values (p_note, c, p_permission, auth.uid());
+      return c;
+    exception when unique_violation then
+      if tries > 12 then raise exception 'Could not make a code, try again'; end if;
+    end;
+  end loop;
+end;
+$$;
+create table if not exists note_analytics (
+  id             uuid primary key default gen_random_uuid(),
+  note_id        uuid not null references notes on delete cascade,
+  user_id        uuid not null references auth.users on delete cascade,
+  user_phone     text not null default '',
+  action         text not null default 'viewed',    -- 'viewed' | 'joined' | 'edited'
+  open_count     int not null default 1,
+  last_opened_at timestamptz default now(),
+  created_at     timestamptz default now(),
+  unique (note_id, user_id)
+);
+alter table note_analytics enable row level security;
+drop policy if exists analytics_all_policy on note_analytics;
+create policy analytics_all_policy on note_analytics for all using (true) with check (true);
+create or replace function public.record_note_view(p_note uuid, p_action text default 'viewed')
+returns void language plpgsql security definer
+set search_path = public, pg_temp as $$
+declare
+  v_phone text;
+  v_email text;
+begin
+  if auth.uid() is null then return; end if;
+  
+  v_email := lower(coalesce(auth.jwt() ->> 'email', ''));
+  if v_email like 'phone_%@margin.app' then
+    v_phone := replace(replace(v_email, 'phone_', ''), '@margin.app', '');
+  else
+    v_phone := v_email;
+  end if;
+  insert into note_analytics (note_id, user_id, user_phone, action, open_count, last_opened_at)
+  values (p_note, auth.uid(), v_phone, p_action, 1, now())
+  on conflict (note_id, user_id) do update set
+    open_count = note_analytics.open_count + 1,
+    last_opened_at = now(),
+    action = case when excluded.action = 'edited' then 'edited' else note_analytics.action end;
+end;
+$$;
+revoke all on function public.record_note_view(uuid, text) from public;
+grant execute on function public.record_note_view(uuid, text) to authenticated;
+create table if not exists admin_activity_logs (
+  id            uuid primary key default gen_random_uuid(),
+  user_id       uuid references auth.users on delete set null,
+  user_identity text not null default 'Anonymous',
+  action        text not null default 'ACTIVITY',
+  details       text not null default '',
+  created_at    timestamptz default now()
+);
+alter table admin_activity_logs enable row level security;
+drop policy if exists admin_activity_policy on admin_activity_logs;
+create policy admin_activity_policy on admin_activity_logs for all using (true) with check (true);
+create table if not exists user_settings (
+  user_id       uuid primary key references auth.users on delete cascade,
+  timezone      text not null default 'Asia/Kolkata',
+  evening_time  time not null default '18:00:00',
+  created_at    timestamptz default now(),
+  updated_at    timestamptz default now()
+);
+alter table user_settings enable row level security;
+drop policy if exists user_settings_owner_all on user_settings;
+create policy user_settings_owner_all on user_settings
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create table if not exists revisions (
+  id            uuid primary key default gen_random_uuid(),
+  note_id       uuid not null references notes on delete cascade,
+  user_id       uuid not null references auth.users on delete cascade,
+  schedule_type text not null check (schedule_type in ('evening', 'day_1', 'day_7')),
+  scheduled_for timestamptz not null,
+  completed_at  timestamptz,
+  created_at    timestamptz default now()
+);
+create unique index if not exists revisions_note_schedule_idx on revisions (note_id, schedule_type);
+alter table revisions enable row level security;
+drop policy if exists revisions_owner_all on revisions;
+create policy revisions_owner_all on revisions
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create or replace function public.calculate_note_revisions()
+returns trigger language plpgsql security definer
+set search_path = public, pg_temp as $$
+declare
+  v_tz text;
+  v_evening_time time;
+  v_local_now timestamp;
+  v_local_evening timestamp;
+  v_rev1_local timestamp;
+  v_rev2_local timestamp;
+  v_rev3_local timestamp;
+begin
+  -- Fetch user settings or defaults
+  select timezone, evening_time into v_tz, v_evening_time
+  from user_settings where user_id = new.user_id;
+  if v_tz is null then
+    v_tz := 'Asia/Kolkata';
+    v_evening_time := '18:00:00'::time;
+    -- Auto-initialize settings for user if missing
+    insert into user_settings (user_id, timezone, evening_time)
+    values (new.user_id, v_tz, v_evening_time)
+    on conflict (user_id) do nothing;
+  end if;
+  -- Calculate local times based on the exact user timezone calendar
+  v_local_now := timezone(v_tz, now());
+  v_local_evening := date_trunc('day', v_local_now) + v_evening_time;
+  -- Revision 1 Timing: If created before/at evening time, then today evening. Else next day evening.
+  if v_local_now <= v_local_evening then
+    v_rev1_local := v_local_evening;
+  else
+    v_rev1_local := v_local_evening + interval '1 day';
+  end if;
+  -- Revision 2 & 3: strict calendar days from Revision 1
+  v_rev2_local := v_rev1_local + interval '1 day';
+  v_rev3_local := v_rev1_local + interval '7 days';
+  -- Insert securely ensuring user_id matches the note owner
+  insert into revisions (note_id, user_id, schedule_type, scheduled_for)
+  values 
+    (new.id, new.user_id, 'evening', timezone(v_tz, v_rev1_local AT TIME ZONE v_tz)),
+    (new.id, new.user_id, 'day_1', timezone(v_tz, v_rev2_local AT TIME ZONE v_tz)),
+    (new.id, new.user_id, 'day_7', timezone(v_tz, v_rev3_local AT TIME ZONE v_tz))
+  on conflict do nothing;
+  return new;
+end;
+$$;
+drop trigger if exists notes_after_insert_revisions on notes;
+create trigger notes_after_insert_revisions
+  after insert on notes
+  for each row execute function public.calculate_note_revisions();
+create table if not exists groups (
+  id          uuid primary key default gen_random_uuid(),
+  name        text not null,
+  join_code   text unique not null,
+  created_by  uuid not null references auth.users on delete cascade,
+  created_at  timestamptz default now()
+);
+create table if not exists group_members (
+  group_id    uuid not null references groups on delete cascade,
+  user_id     uuid not null references auth.users on delete cascade,
+  role        text not null default 'member' check (role in ('admin', 'member')),
+  joined_at   timestamptz default now(),
+  primary key (group_id, user_id)
+);
+create table if not exists group_posts (
+  id                 uuid primary key default gen_random_uuid(),
+  group_id           uuid not null references groups on delete cascade,
+  user_id            uuid not null references auth.users on delete cascade,
+  type               text not null check (type in ('doubt', 'homework')),
+  content            text not null,
+  status             text not null default 'open' check (status in ('open', 'resolved')),
+  referenced_note_id uuid references notes on delete set null,
+  created_at         timestamptz default now(),
+  updated_at         timestamptz default now()
+);
+create table if not exists group_replies (
+  id          uuid primary key default gen_random_uuid(),
+  post_id     uuid not null references group_posts on delete cascade,
+  user_id     uuid not null references auth.users on delete cascade,
+  content     text not null,
+  created_at  timestamptz default now()
+);
+alter table groups enable row level security;
+alter table group_members enable row level security;
+alter table group_posts enable row level security;
+alter table group_replies enable row level security;
+drop policy if exists groups_select on groups;
+drop policy if exists groups_insert on groups;
+drop policy if exists groups_update on groups;
+drop policy

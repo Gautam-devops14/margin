@@ -1,0 +1,5 @@
+-- Create a dummy CR user in auth.users? Wait, auth.users is protected.
+-- Actually, I don't need a real auth user if I'm just inserting into notes. 
+-- Wait, notes table has:
+-- user_id uuid not null references auth.users on delete cascade
+-- So I MUST have a valid user in auth.users.
