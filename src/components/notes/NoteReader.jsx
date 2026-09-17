@@ -29,7 +29,7 @@ export default function NoteReader({ noteRef, user, onBack }) {
       setUnavailable(true);
     } else {
       setNote(data);
-      supabase.rpc('record_note_view', { p_note: id }).catch(() => {});
+      await supabase.rpc('record_note_view', { p_note: id });
     }
     setLoading(false);
   }
