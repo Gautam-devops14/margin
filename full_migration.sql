@@ -1,3 +1,9 @@
+create or replace function public.get_user_role(p_id uuid)
+returns text language sql stable security definer
+set search_path = public, pg_temp as $$
+  select role from profiles where id = p_id;
+$$;
+
 -- (Just getting the schema contents)
 -- ============================================================================
 -- Margin — database schema
@@ -641,9 +647,7 @@ create policy profiles_insert_own on profiles
 
 -- CR can read all profiles (for moderation)
 create policy profiles_cr_select_all on profiles
-  for select using (
-    exists (select 1 from profiles p where p.id = auth.uid() and p.role = 'cr')
-  );
+  for select using (public.is_cr());
 
 -- Helper function: check if current user is CR
 create or replace function public.is_cr()
@@ -787,7 +791,7 @@ CREATE POLICY profiles_update_own ON profiles
   USING (auth.uid() = id)
   WITH CHECK (
     auth.uid() = id
-    AND role = (SELECT role FROM profiles WHERE id = auth.uid())
+    AND role = public.get_user_role(auth.uid())
   );
 
 DROP POLICY IF EXISTS profiles_insert_own ON profiles;
