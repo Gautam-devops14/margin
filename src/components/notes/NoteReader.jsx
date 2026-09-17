@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../../supabaseClient';
 import { SUBJECTS } from '../../lib/subjects';
 import CommentSection from '../comments/CommentSection';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css'; // Or bubble
 
 export default function NoteReader({ noteRef, user, onBack }) {
   const [note, setNote] = useState(null);
@@ -23,7 +25,6 @@ export default function NoteReader({ noteRef, user, onBack }) {
       .eq('id', id)
       .maybeSingle();
 
-    // Students blocked from unpublished notes; CR can preview drafts
     if (error || !data || (!data.published && !isCR)) {
       setUnavailable(true);
     } else {
@@ -64,18 +65,15 @@ export default function NoteReader({ noteRef, user, onBack }) {
 
   const subj = SUBJECTS.find(s => s.id === note.subject_id);
 
-  // Parse content — Quill Delta JSON → plain lines, or plain text
-  let contentLines = [];
+  // Parse content — support plain text, Quill Delta JSON, or HTML
+  let parsedContent = note.content || '';
   try {
     const parsed = JSON.parse(note.content || '{}');
     if (parsed.ops) {
-      const raw = parsed.ops.map(op => (typeof op.insert === 'string' ? op.insert : '')).join('');
-      contentLines = raw.split('\n').filter(l => l.trim());
-    } else {
-      contentLines = (note.content || '').split('\n').filter(l => l.trim());
+      parsedContent = parsed;
     }
   } catch {
-    contentLines = (note.content || '').split('\n').filter(l => l.trim());
+    // If JSON parse fails, it's plain text or HTML, which ReactQuill handles safely
   }
 
   return (
@@ -90,26 +88,29 @@ export default function NoteReader({ noteRef, user, onBack }) {
 
       <div className="notebook-container">
         <div className="notebook-binding" />
-        <div className="notebook-content">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--pencil)', textTransform: 'uppercase', letterSpacing: 1 }}>
-              {subj?.name || note.subject_id}
-            </span>
-            <span className="badge draft">🔒 Read Only</span>
-          </div>
+        <div className="notebook-content" style={{ padding: 0 }}>
+          <div style={{ padding: '32px 48px 0 64px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--pencil)', textTransform: 'uppercase', letterSpacing: 1 }}>
+                {subj?.name || note.subject_id}
+              </span>
+              <span className="badge draft">🔒 Read Only</span>
+            </div>
 
-          <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, marginBottom: 4, borderBottom: '2px solid var(--ink)', display: 'inline-block', paddingBottom: 4 }}>
-            {note.chapter || note.topic || 'Note'}
-          </h1>
-          <div style={{ fontSize: 13, color: 'var(--pencil)', marginBottom: 40 }}>
-            Posted {new Date(note.updated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+            <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 28, marginBottom: 4, borderBottom: '2px solid var(--ink)', display: 'inline-block', paddingBottom: 4 }}>
+              {note.chapter || note.topic || 'Note'}
+            </h1>
+            <div style={{ fontSize: 13, color: 'var(--pencil)', marginBottom: 24 }}>
+              Posted {new Date(note.updated_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
+            </div>
           </div>
-
-          {contentLines.length > 0 ? (
-            contentLines.map((line, i) => <p key={i}>{line}</p>)
-          ) : (
-            <p style={{ color: 'var(--pencil)', fontStyle: 'italic' }}>This note has no text content yet.</p>
-          )}
+          
+          <ReactQuill 
+            value={parsedContent}
+            readOnly={true}
+            theme="bubble"
+            className="reader-quill"
+          />
         </div>
       </div>
 

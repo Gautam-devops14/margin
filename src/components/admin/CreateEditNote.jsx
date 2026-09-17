@@ -1,25 +1,57 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../supabaseClient';
 import { SUBJECTS } from '../../lib/subjects';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 export default function CreateEditNote({ note, user, onBack, onSaved }) {
   const isEditing = !!note;
   const [subjectId, setSubjectId] = useState(note?.subject_id || SUBJECTS[0].id);
   const [chapter, setChapter] = useState(note?.chapter || '');
-  const [content, setContent] = useState(note?.content || '');
+  
+  // State for Quill
+  const [content, setContent] = useState('');
+  
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [publishModal, setPublishModal] = useState(false);
+  
+  const quillRef = useRef(null);
 
+  useEffect(() => {
+    if (note) {
+      try {
+        const parsed = JSON.parse(note.content || '{}');
+        if (parsed.ops) {
+          setContent(parsed); // It's a Delta
+        } else {
+          setContent(note.content || ''); // JSON but not Delta? Fallback.
+        }
+      } catch {
+        setContent(note.content || ''); // Plain text or HTML
+      }
+    }
+  }, [note]);
+
+  // Handle saving
   async function saveNote(publish = false) {
     if (!chapter.trim()) { setError('Please enter a chapter title.'); return; }
     setError('');
     setSaving(true);
 
+    // Get the editor's contents
+    let finalContent = content;
+    if (quillRef.current) {
+      // Save as Delta JSON for the richest format
+      finalContent = JSON.stringify(quillRef.current.getEditor().getContents());
+    } else if (typeof content !== 'string') {
+      finalContent = JSON.stringify(content);
+    }
+
     if (isEditing) {
       const { error: err } = await supabase
         .from('notes')
-        .update({ subject_id: subjectId, chapter: chapter.trim(), content, published: publish ? true : note.published, updated_at: new Date().toISOString() })
+        .update({ subject_id: subjectId, chapter: chapter.trim(), content: finalContent, published: publish ? true : note.published, updated_at: new Date().toISOString() })
         .eq('id', note.id);
       if (err) { setError(err.message); setSaving(false); return; }
       if (publish) {
@@ -28,7 +60,7 @@ export default function CreateEditNote({ note, user, onBack, onSaved }) {
     } else {
       const { data, error: err } = await supabase
         .from('notes')
-        .insert({ user_id: user.id, subject_id: subjectId, chapter: chapter.trim(), topic: chapter.trim(), content, published: publish })
+        .insert({ user_id: user.id, subject_id: subjectId, chapter: chapter.trim(), topic: chapter.trim(), content: finalContent, published: publish })
         .select('id')
         .single();
       if (err) { setError(err.message); setSaving(false); return; }
@@ -39,6 +71,16 @@ export default function CreateEditNote({ note, user, onBack, onSaved }) {
     onSaved?.();
     onBack();
   }
+
+  const modules = {
+    toolbar: [
+      [{ 'header': [1, 2, 3, false] }],
+      ['bold', 'italic', 'underline'],
+      [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+      ['link'],
+      ['clean']
+    ]
+  };
 
   return (
     <div>
@@ -79,20 +121,16 @@ export default function CreateEditNote({ note, user, onBack, onSaved }) {
         </div>
       </div>
 
-      {/* Content editor — plain textarea (Quill can be wired in here) */}
       <div className="notebook-container" style={{ minHeight: 480, margin: '0 0 32px' }}>
         <div className="notebook-binding" />
         <div style={{ padding: 0 }}>
-          <div style={{ background: 'white', padding: '10px 16px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8 }}>
-            <button className="btn ghost" style={{ padding: '4px 8px' }}><b>B</b></button>
-            <button className="btn ghost" style={{ padding: '4px 8px' }}><i>I</i></button>
-            <button className="btn ghost" style={{ padding: '4px 8px' }}><u>U</u></button>
-          </div>
-          <textarea
-            style={{ width: '100%', minHeight: 400, padding: '32px 48px 64px 64px', fontFamily: 'var(--font-read)', fontSize: 17, lineHeight: 1.6, border: 'none', outline: 'none', resize: 'vertical', background: 'transparent', backgroundImage: 'repeating-linear-gradient(transparent, transparent 27px, var(--paper-line) 28px)', backgroundAttachment: 'local', boxSizing: 'border-box' }}
-            placeholder="Start writing your note here..."
+          <ReactQuill
+            ref={quillRef}
+            theme="snow"
             value={content}
-            onChange={e => setContent(e.target.value)}
+            onChange={setContent}
+            modules={modules}
+            placeholder="Start writing your note here..."
           />
         </div>
       </div>

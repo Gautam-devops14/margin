@@ -423,3 +423,22 @@ h1, h2, h3, h4, h5, h6 {
 .ql-toolbar.ql-snow { border: none !important; border-bottom: 1px solid var(--border) !important; background: var(--bg-card); position: sticky; top: 0; z-index: 10; padding: 12px !important; }
 .ql-editor { padding: 0 !important; line-height: 1.6 !important; }
 .ql-editor p { margin-bottom: 28px; }
+.ql-editor {
+  min-height: 400px;
+  padding: 32px 48px 64px 64px !important;
+  font-family: var(--font-read) !important;
+  font-size: 17px !important;
+  line-height: 1.6 !important;
+  background-image: repeating-linear-gradient(transparent, transparent 27px, var(--paper-line) 28px) !important;
+  background-attachment: local !important;
+}
+.ql-toolbar {
+  border: none !important;
+  border-bottom: 1px solid var(--border) !important;
+  background: white;
+  padding: 10px 16px !important;
+}
+.ql-container {
+  border: none !important;
+  font-family: inherit !important;
+}
