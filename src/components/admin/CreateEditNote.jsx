@@ -19,19 +19,24 @@ export default function CreateEditNote({ note, user, onBack, onSaved }) {
   const quillRef = useRef(null);
 
   useEffect(() => {
-    if (note) {
-      try {
-        const parsed = JSON.parse(note.content || '{}');
-        if (parsed.ops) {
-          setContent(parsed); // It's a Delta
-        } else {
-          setContent(note.content || ''); // JSON but not Delta? Fallback.
+    if (note?.id) {
+      // Fetch full content because list views might not include it
+      supabase.from('notes').select('content').eq('id', note.id).single().then(({ data }) => {
+        if (data) {
+          try {
+            const parsed = JSON.parse(data.content || '{}');
+            if (parsed.ops) {
+              setContent(parsed); // It's a Delta
+            } else {
+              setContent(data.content || '');
+            }
+          } catch {
+            setContent(data.content || ''); // Plain HTML or text
+          }
         }
-      } catch {
-        setContent(note.content || ''); // Plain text or HTML
-      }
+      });
     }
-  }, [note]);
+  }, [note?.id]);
 
   // Handle saving
   async function saveNote(publish = false) {
